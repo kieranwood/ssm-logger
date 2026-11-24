@@ -7,6 +7,8 @@
 const PY_MODULES = ["recording.py", "analyse.py"];
 // Deployed site: modules are copied to py/. Local dev (serving the repo root): they sit one level up.
 const PY_BASES = ["py/", "../"];
+// Deploys stamp ?v=<commit> on app.js; reuse it so the Python modules are refreshed together.
+const VERSION = new URL(document.currentScript.src).searchParams.get("v") || "dev";
 
 // Same defaults and colours as the desktop logger (logger.py).
 const DEFAULT_CHANNELS = [
@@ -69,7 +71,8 @@ function setStatus(text, error = false) {
 
 async function fetchModule(name) {
   for (const base of PY_BASES) {
-    const r = await fetch(base + name).catch(() => null);
+    const r = await fetch(`${base}${name}?v=${VERSION}`, { cache: VERSION === "dev" ? "no-store" : "default" })
+      .catch(() => null);
     if (r && r.ok) return r.text();
   }
   throw new Error(`could not load ${name}`);
