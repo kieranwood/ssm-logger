@@ -23,6 +23,23 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   ranges it is based on.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
 
+## Browser viewer
+
+**[kieranwood.github.io/ssm-logger](https://kieranwood.github.io/ssm-logger/)** opens recordings
+in any modern browser with nothing to install: drop in a CSV from this logger or from the
+OpenPort's SD card to chart it and run the same analysis. It runs this repo's own
+`recording.py` and `analyse.py` in the browser with [Pyodide](https://pyodide.org), so files are
+never uploaded. The first visit downloads about 10 MB (Python and numpy), which the browser then
+caches. It can't connect to the car yet.
+
+To run it locally, serve the repo root and open `/web/`:
+
+```sh
+python3 -m http.server 8000    # then open http://localhost:8000/web/
+```
+
+`/web/?url=path/to/log.csv` opens a recording straight away.
+
 ## Requirements
 
 - Python 3.10+ on macOS or Linux
@@ -82,6 +99,7 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `analyse.py` | Rule-based checks on a recording |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
 | `probe.py` | Proof-of-concept connection test |
+| `web/` | Browser log viewer (deployed to GitHub Pages by `.github/workflows/pages.yml`) |
 | `sdcard/logcfg.txt` | OpenPort standalone (SD card) logging config for the 2012 Forester |
 
 ## Limitations

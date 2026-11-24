@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSM Log Viewer</title>
+<meta name="description" content="View and analyse Subaru SSM logger and OpenPort SD-card recordings in the browser. Files never leave your computer.">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <label class="btn primary" for="file">Open recording…</label>
+  <input id="file" type="file" accept=".csv,text/csv" hidden>
+  <button id="analyse" class="btn" disabled>Analyse</button>
+  <button id="reset" class="btn" disabled>Reset zoom</button>
+  <span id="info" class="info"></span>
+  <span id="status" class="status">Loading Python…</span>
+</header>
+
+<main id="main">
+  <aside id="side">
+    <input id="filter" type="search" placeholder="Filter channels…" disabled>
+    <div id="channels"></div>
+  </aside>
+
+  <section id="charts">
+    <div id="empty" class="empty">
+      <h1>SSM Log Viewer</h1>
+      <p>Drop a recording here, or use <b>Open recording…</b></p>
+      <p class="sub">Reads CSVs from the <a href="https://github.com/kieranwood/ssm-logger">ssm-logger</a>
+        desktop app and from the Tactrix OpenPort's SD-card logging, then runs the same fuel-trim and
+        sensor checks. Everything runs in your browser - the file is never uploaded.</p>
+    </div>
+  </section>
+
+  <aside id="findings" hidden>
+    <div class="findings-head">
+      <b>Analysis</b>
+      <span id="counts"></span>
+      <button id="close-findings" class="btn small" aria-label="Close analysis">✕</button>
+    </div>
+    <ol id="finding-list"></ol>
+    <p class="note">Rules of thumb for a naturally aspirated Subaru FB25 - hints, not a diagnosis.
+      Click a finding to zoom the charts to it.</p>
+  </aside>
+</main>
+
+<footer id="cursor-readout">Drag across a chart to zoom in · double-click to zoom out</footer>
+<div id="drop" hidden><div>Drop the CSV to open it</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
