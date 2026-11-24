@@ -6,8 +6,9 @@ The same checks run from the "Analyse" button in the logger. Each check only
 runs when the channels it needs were logged, and every finding carries the
 time ranges it is based on so the GUI can jump straight to them.
 
-These are rules of thumb for a naturally aspirated Subaru FB25 with a front
-wideband A/F sensor and a rear narrowband O2 sensor - not a diagnosis.
+These are rules of thumb for a Subaru with a front wideband A/F sensor and a rear
+narrowband O2 sensor - not a diagnosis. The engine-specific numbers (warm-up temperatures,
+idle airflow, boost...) come from an engine profile, see profiles.py.
 """
 
 from __future__ import annotations
@@ -17,13 +18,17 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+import profiles
+from profiles import Profile
+
 PROBLEM, WARNING, INFO, OK = "problem", "warning", "info", "ok"
 LEVEL_ORDER = {PROBLEM: 0, WARNING: 1, INFO: 2, OK: 3}
 LEVEL_MARK = {PROBLEM: "✖", WARNING: "▲", INFO: "•", OK: "✔"}
 
-WARM_C = 80.0          # coolant considered fully warm
-COLD_C = 70.0          # below this the engine is still warming up
-C3_REST = -50.0        # A/F Correction #3 rests here on this ECU (not 0)
+# defaults (naturally aspirated 2.5 L); the checks use the profile passed to analyse()
+WARM_C = profiles.DEFAULT.warm_c
+COLD_C = profiles.DEFAULT.cold_c
+C3_REST = profiles.DEFAULT.c3_rest
 
 
 @dataclass
@@ -81,7 +86,7 @@ def _mean(v: np.ndarray, mask: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------- checks
-def _states(L: Log) -> dict[str, np.ndarray]:
+def _states(L: Log, P: Profile = profiles.DEFAULT) -> dict[str, np.ndarray]:
     n = len(L.t)
     true = np.ones(n, bool)
     running = L["Engine Speed"] > 400 if L.has("Engine Speed") else true
@@ -94,14 +99,14 @@ def _states(L: Log) -> dict[str, np.ndarray]:
         closed = running & ~fuel_cut
     if L.has("Coolant Temperature"):
         cool = L["Coolant Temperature"]
-        warm, cold = cool >= WARM_C, cool < COLD_C
+        warm, cold = cool >= P.warm_c, cool < P.cold_c
     else:
         warm, cold = true, np.zeros(n, bool)
     idle = running & ((L["Vehicle Speed"] < 2) if L.has("Vehicle Speed") else (L["Engine Speed"] < 1000))
     return dict(running=running, fuel_cut=fuel_cut, closed=closed, warm=warm, cold=cold, idle=idle)
 
 
-def check_trims(L: Log, S) -> list[Finding]:
+def check_trims(L: Log, S, P: Profile) -> list[Finding]:
     if not L.has("Air/Fuel Correction #1"):
         return []
     out = []
@@ -150,8 +155,8 @@ def check_trims(L: Log, S) -> list[Finding]:
         cold_s, warm_s = L.duration(cl & S["cold"]), L.duration(cl & S["warm"])
         if cold_s >= 15 and warm_s >= 15:
             diff = cold_m - warm_m
-            text = (f"Closed-loop trim is {cold_m:+.1f}% below {COLD_C:.0f}°C coolant and "
-                    f"{warm_m:+.1f}% above {WARM_C:.0f}°C.")
+            text = (f"Closed-loop trim is {cold_m:+.1f}% below {P.cold_c:.0f}°C coolant and "
+                    f"{warm_m:+.1f}% above {P.warm_c:.0f}°C.")
             if diff > 8:
                 out.append(Finding(PROBLEM, "Engine runs lean only while warming up", text +
                                    " A fault that fades as the engine heats up points to something that "
@@ -170,8 +175,9 @@ def check_trims(L: Log, S) -> list[Finding]:
     if L.has("Mass Air Flow"):
         maf = L["Mass Air Flow"]
         base = cl & S["warm"] if L.duration(cl & S["warm"]) >= 20 else cl
-        bands = [("idle (<5 g/s)", maf < 5), ("light (5–15 g/s)", (maf >= 5) & (maf < 15)),
-                 ("cruise (15–40 g/s)", (maf >= 15) & (maf < 40)), ("load (>40 g/s)", maf >= 40)]
+        b1, b2, b3 = P.maf_bands
+        bands = [(f"idle (<{b1:g} g/s)", maf < b1), (f"light ({b1:g}–{b2:g} g/s)", (maf >= b1) & (maf < b2)),
+                 (f"cruise ({b2:g}–{b3:g} g/s)", (maf >= b2) & (maf < b3)), (f"load (>{b3:g} g/s)", maf >= b3)]
         rows = [(name, _mean(total, base & b), L.duration(base & b)) for name, b in bands]
         rows = [r for r in rows if r[2] >= 5]
         if len(rows) >= 2:
@@ -191,7 +197,7 @@ def check_trims(L: Log, S) -> list[Finding]:
     return out
 
 
-def check_sensors(L: Log, S) -> list[Finding]:
+def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
     out = []
     cl, warm = S["closed"], S["warm"]
     has_front = L.has("Air/Fuel Sensor #1 AFR")
@@ -248,23 +254,30 @@ def check_sensors(L: Log, S) -> list[Finding]:
                                f"Lowest reading {lo:.2f} V despite fuel cuts; a healthy sensor drops below "
                                "0.2 V. Sensor may be slow or stuck."))
 
-    if L.has("Air/Fuel Correction #3"):
-        # On this ECU the value rests around -50%, not 0: it reads -50% at key-on before the rear
+    if L.has("Air/Fuel Correction #3") and P.c3_rest is None:
+        c3 = L["Air/Fuel Correction #3"]
+        if L.duration(S["running"]) >= 30:
+            med = float(np.nanmedian(c3[S["running"]]))
+            out.append(Finding(INFO, f"Rear-sensor correction (A/F Correction #3) median {med:+.0f}%",
+                               "Where this value normally rests isn't known for this engine, so it isn't "
+                               "judged; rely on the fuel trims and rear O2 voltage."))
+    elif L.has("Air/Fuel Correction #3"):
+        # On the FB25 ECU the value rests around -50%, not 0: it reads -50% at key-on before the rear
         # sensor is warm, and with a healthy front sensor it swings either side of -50% no matter
         # whether the rear O2 reads rich or lean. So only a median well away from -50% is notable.
         c3 = L["Air/Fuel Correction #3"]
         mask = S["running"]
         if L.duration(mask) >= 30:
             med = float(np.nanmedian(c3[mask]))
-            off = med - C3_REST
+            off = med - P.c3_rest
             if abs(off) > 15:
                 out.append(Finding(WARNING, f"Rear-sensor correction (A/F Correction #3) sits at {med:+.0f}%",
                                    f"That is {off:+.0f} points from its usual resting value of about "
-                                   f"{C3_REST:+.0f}%. Treat as a hint only - the exact meaning and limits of "
+                                   f"{P.c3_rest:+.0f}%. Treat as a hint only - the exact meaning and limits of "
                                    "this value aren't known; rely on the fuel trims and rear O2 voltage."))
             else:
                 out.append(Finding(INFO, f"Rear-sensor correction (A/F Correction #3) median {med:+.0f}%",
-                                   f"Close to its usual resting value of about {C3_REST:+.0f}% on this ECU, "
+                                   f"Close to its usual resting value of about {P.c3_rest:+.0f}%, "
                                    "so nothing to read into it."))
 
     if L.has("Air/Fuel Sensor #1 Resistance") and L.has("Coolant Temperature"):
@@ -285,18 +298,21 @@ def check_sensors(L: Log, S) -> list[Finding]:
     return out
 
 
-def check_maf(L: Log, S) -> list[Finding]:
+def check_maf(L: Log, S, P: Profile) -> list[Finding]:
     out = []
     if L.has("Mass Air Flow", "Coolant Temperature"):
         m = S["idle"] & S["warm"] & S["closed"]
         if L.duration(m) >= 10:
             g = float(np.nanmedian(L["Mass Air Flow"][m]))
-            if g < 2.0:
+            lo, hi = P.idle_maf
+            engine = "this engine" if P.turbo else f"a {P.litres:.1f} L engine"
+            if g < lo * 0.8:
                 out.append(Finding(WARNING, f"Warm idle airflow is low ({g:.1f} g/s)",
-                                   "A 2.5 L engine usually idles around 2.5–4 g/s. A MAF reading low (dirty or "
-                                   "failing) or air bypassing it would make the engine run lean."))
+                                   f"{engine[0].upper() + engine[1:]} usually idles around {lo:g}–{hi:g} g/s. "
+                                   "A MAF reading low (dirty or failing) or air bypassing it would make the "
+                                   "engine run lean."))
             else:
-                out.append(Finding(OK, f"Warm idle airflow {g:.1f} g/s", "Plausible for a 2.5 L engine."))
+                out.append(Finding(OK, f"Warm idle airflow {g:.1f} g/s", f"Plausible for {engine}."))
     if L.has("Air Flow Sensor Voltage"):
         v = L["Air Flow Sensor Voltage"]
         dv = np.abs(np.diff(v, prepend=v[0]))
@@ -321,7 +337,7 @@ def check_maf(L: Log, S) -> list[Finding]:
     return out
 
 
-def check_electrical(L: Log, S) -> list[Finding]:
+def check_electrical(L: Log, S, P: Profile) -> list[Finding]:
     if not L.has("Battery Voltage"):
         return []
     out = []
@@ -348,25 +364,26 @@ def check_electrical(L: Log, S) -> list[Finding]:
     return out
 
 
-def check_engine(L: Log, S) -> list[Finding]:
+def check_engine(L: Log, S, P: Profile) -> list[Finding]:
     out = []
     if L.has("Coolant Temperature"):
         c = L["Coolant Temperature"]
         run_s = L.duration(S["running"])
         top = float(np.nanmax(c))
-        if run_s > 600 and top < 75:
+        if run_s > 600 and top < P.warm_c - 5:
             out.append(Finding(WARNING, f"Coolant only reached {top:.0f}°C after {run_s / 60:.0f} min running",
                                "Possible thermostat stuck open. The ECU keeps warm-up enrichment and fuel "
                                "trim behaviour stays in 'cold' mode."))
-        elif top >= WARM_C:
-            hit = np.flatnonzero(c >= WARM_C)
+        elif top >= P.warm_c:
+            hit = np.flatnonzero(c >= P.warm_c)
             start = np.flatnonzero(S["running"])
             if len(hit) and len(start) and c[start[0]] < 40:
                 mins = (L.t[hit[0]] - L.t[start[0]]) / 60
-                out.append(Finding(INFO, f"Warmed from {c[start[0]]:.0f}°C to {WARM_C:.0f}°C in {mins:.1f} min",
+                out.append(Finding(INFO, f"Warmed from {c[start[0]]:.0f}°C to {P.warm_c:.0f}°C in {mins:.1f} min",
                                    "Typical is 5–15 min depending on outside temperature and driving."))
-        if top > 105:
-            out.append(Finding(WARNING, f"Coolant reached {top:.0f}°C", "Hotter than the usual 85–100°C."))
+        if top > P.hot_c:
+            out.append(Finding(WARNING, f"Coolant reached {top:.0f}°C",
+                               f"Hotter than the usual {P.running_c[0]:.0f}–{P.running_c[1]:.0f}°C."))
 
     rough = [n for n in (f"Roughness Monitor Cylinder #{i}" for i in range(1, 5)) if L.has(n)]
     if rough:
@@ -410,21 +427,80 @@ def check_engine(L: Log, S) -> list[Finding]:
     return out
 
 
-CHECKS = [check_trims, check_sensors, check_maf, check_electrical, check_engine]
+def check_boost(L: Log, S, P: Profile) -> list[Finding]:
+    """Turbo engines: how much boost, fuelling under boost, and knock under boost."""
+    if not P.turbo or not L.has("Manifold Relative Pressure"):
+        return []
+    out = []
+    mrp = L["Manifold Relative Pressure"]
+    run = S["running"]
+    peak = float(np.nanmax(mrp[run])) if run.any() else float("nan")
+    boost = run & (mrp > P.boost_psi)
+    if L.duration(boost) < 1.0:
+        return [Finding(INFO, f"Little or no time in boost (peak {peak:.1f} psi)",
+                        f"The boost checks need a few seconds above {P.boost_psi:g} psi - for example a "
+                        "full-throttle pull in 3rd gear from about 2500 rpm, where it's safe and legal.")]
+    pulls = L.runs(boost, min_s=0.5, join_s=1.0)
+    out.append(Finding(INFO, f"Peak boost {peak:.1f} psi over {len(pulls)} pull(s)",
+                       f"At {_fmt_ranges(pulls)}. Compare with the stock target for your model: well below it "
+                       "points to a boost leak (intercooler or hose couplers) or a sticking wastegate, well "
+                       "above it to a boost control fault.", pulls))
+    # judge fuelling and knock where boost is well established, not while it is still building
+    deep = boost & (mrp >= max(P.boost_psi + 3, 0.7 * peak))
+    if L.has("Air/Fuel Sensor #1 AFR") and L.duration(deep) >= 0.5:
+        afr = L["Air/Fuel Sensor #1 AFR"]
+        lean = L.runs(deep & (afr > P.max_boost_afr), min_s=0.5)
+        med = float(np.nanmedian(afr[deep]))
+        if lean:
+            out.append(Finding(PROBLEM, f"Lean under boost (leaner than {P.max_boost_afr:g} AFR)",
+                               f"At {_fmt_ranges(lean)}; median {med:.1f} AFR at high boost. Turbo engines run "
+                               "rich under boost (about 10.5–11.8 AFR) to stay safe - lean there risks "
+                               "detonation. Fuel pump, injectors, a MAF reading low, or a leak after the MAF. "
+                               "Avoid full throttle until it's found.", lean))
+        else:
+            out.append(Finding(OK, f"Fuelling under boost {med:.1f} AFR (median)",
+                               f"Richer than {P.max_boost_afr:g} AFR throughout, as it should be."))
+    if L.has("Knock Correction"):
+        kc = L["Knock Correction"]
+        pulled = L.runs(boost & (kc < -1.5), join_s=0.5)
+        worst = float(np.nanmin(kc[boost]))
+        if worst <= -4:
+            out.append(Finding(PROBLEM, f"Knock under boost: timing pulled by up to {-worst:.1f}°",
+                               f"At {_fmt_ranges(pulled)}. Repeated knock under boost can damage pistons and "
+                               "ringlands: check fuel octane, intake air temperature and fuelling, and drive "
+                               "gently until it's sorted.", pulled))
+        elif pulled:
+            out.append(Finding(WARNING, f"Some knock under boost (up to {-worst:.1f}° pulled)",
+                               f"At {_fmt_ranges(pulled)}. Occasional small corrections happen; regular ones "
+                               "suggest low-octane fuel or heat soak.", pulled))
+        else:
+            out.append(Finding(OK, "No knock correction under boost", f"Lowest {worst:+.1f}° in boost."))
+    return out
 
 
-def analyse(t: np.ndarray, series: dict[str, np.ndarray]) -> list[Finding]:
+CHECKS = [check_trims, check_sensors, check_maf, check_boost, check_electrical, check_engine]
+
+
+def analyse(t: np.ndarray, series: dict[str, np.ndarray],
+            profile: Profile | str | None = None) -> list[Finding]:
+    """profile: a Profile, a profile key, or None/"auto" to pick one from the channels."""
     L = Log(t, {k: np.asarray(v, dtype=float) for k, v in series.items()})
+    if isinstance(profile, Profile):
+        P, note = profile, "chosen under Engine profile"
+    else:
+        P, note = profiles.resolve(profile, L.s)
     if len(L.t) < 10:
         return [Finding(INFO, "Too little data", "Log at least a minute of driving before analysing.")]
-    S = _states(L)
+    S = _states(L, P)
     if L.duration(S["running"]) < 10:
         return [Finding(INFO, "Engine not running in this log",
                         "No samples with the engine above 400 RPM.")]
-    findings: list[Finding] = []
+    findings: list[Finding] = [Finding(INFO, f"Engine profile: {P.name}",
+                                       f"{P.engines} - {note}. The thresholds below are rules of thumb "
+                                       "for these engines.")]
     for check in CHECKS:
         try:
-            findings += check(L, S)
+            findings += check(L, S, P)
         except Exception as e:                   # one broken check shouldn't hide the rest
             findings.append(Finding(INFO, f"{check.__name__} failed", repr(e)))
     findings.sort(key=lambda f: LEVEL_ORDER[f.level])
@@ -440,15 +516,18 @@ def format_findings(findings: list[Finding]) -> str:
 
 
 def main(argv: list[str]) -> int:
+    import argparse
     import recording
-    if len(argv) != 1:
-        print(__doc__)
-        return 2
-    rec = recording.load_csv(argv[0])
+    ap = argparse.ArgumentParser(description="Run the fixed checks on a recording.")
+    ap.add_argument("csv")
+    ap.add_argument("--engine", choices=[k for k, _ in profiles.choices()], default=profiles.AUTO,
+                    help="engine profile (default: detect from the channels)")
+    args = ap.parse_args(argv)
+    rec = recording.load_csv(args.csv)
     series = {c.name: rec.y[i] for i, c in enumerate(rec.channels)}
     dur = rec.t[-1] - rec.t[0]
     print(f"{rec.path.name}: {dur / 60:.1f} min, {len(rec.t)} rows\n")
-    print(format_findings(analyse(rec.t, series)))
+    print(format_findings(analyse(rec.t, series, args.engine)))
     return 0
 
 

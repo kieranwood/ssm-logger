@@ -2,8 +2,8 @@
 
 Each test lists its steps; the app records from Start to Finish (or you run it on part of a saved
 recording) and evaluate() turns that stretch of data into findings, shown like the Analyse
-results. Thresholds are rules of thumb for a naturally aspirated Subaru FB25 - hints, not a
-diagnosis.
+results. Thresholds are rules of thumb taken from the engine profile (profiles.py) - hints, not
+a diagnosis.
 
 Used by logger.py (desktop) and web/webapp.py (browser).
 """
@@ -15,7 +15,9 @@ from typing import Callable
 
 import numpy as np
 
-from analyse import INFO, OK, PROBLEM, WARNING, Finding, Log, _fmt_ranges, _states
+import profiles
+from analyse import INFO, OK, PROBLEM, WARNING, Finding, Log, _fmt_ranges, _states, check_boost
+from profiles import Profile
 
 
 @dataclass
@@ -25,7 +27,7 @@ class GuidedTest:
     purpose: str
     steps: list[str]
     needs: list[str]                     # channels the test can't run without
-    evaluate: Callable[[Log], list[Finding]]
+    evaluate: Callable[[Log, Profile], list[Finding]]
 
 
 def _median(v: np.ndarray, mask: np.ndarray) -> float:
@@ -35,8 +37,9 @@ def _median(v: np.ndarray, mask: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------- warm-up and thermostat
-def _thermostat(L: Log) -> list[Finding]:
-    S = _states(L)
+def _thermostat(L: Log, P: Profile) -> list[Finding]:
+    S = _states(L, P)
+    warm = P.warm_c
     run = S["running"]
     cool = L["Coolant Temperature"]
     if L.duration(run) < 60:
@@ -50,35 +53,37 @@ def _thermostat(L: Log) -> list[Finding]:
                            "For a meaningful warm-up time, start after the car has sat for a few hours."))
     peak = float(np.nanmax(c_run))
     minutes = (t_run[-1] - t_run[0]) / 60
-    reached = np.flatnonzero(c_run >= 80)
-    if peak > 105:
+    reached = np.flatnonzero(c_run >= warm)
+    if peak > P.hot_c:
         out.append(Finding(PROBLEM, f"Coolant reached {peak:.0f} °C",
-                           "Above about 105 °C is overheating: check coolant level, the radiator fan, "
-                           "and for a thermostat stuck closed.", L.runs(run & (cool > 105))))
+                           f"Above about {P.hot_c:.0f} °C is overheating: check coolant level, the radiator "
+                           "fan, and for a thermostat stuck closed.", L.runs(run & (cool > P.hot_c))))
     if not len(reached):
         level = PROBLEM if minutes >= 15 else WARNING
-        out.append(Finding(level, f"Coolant never reached 80 °C (peak {peak:.0f} °C after {minutes:.0f} min)",
-                           "An FB25 normally runs at about 85-95 °C once warm. Staying cooler after "
+        out.append(Finding(level, f"Coolant never reached {warm:.0f} °C (peak {peak:.0f} °C after "
+                           f"{minutes:.0f} min)",
+                           f"These engines normally run at about {P.running_c[0]:.0f}-{P.running_c[1]:.0f} °C "
+                           "once warm. Staying cooler after "
                            "15+ minutes of driving points to a thermostat stuck open (code P0128). "
                            "On a cold day at idle it can take longer - drive rather than idle."))
         return out
     t80 = (t_run[reached[0]] - t_run[0]) / 60
     if start < 40 and t80 > 15:
-        out.append(Finding(WARNING, f"Slow warm-up: {t80:.0f} min to reach 80 °C",
+        out.append(Finding(WARNING, f"Slow warm-up: {t80:.0f} min to reach {warm:.0f} °C",
                            "Usually under about 10-15 minutes of driving from cold. A thermostat "
                            "opening too early is the common cause."))
     else:
-        out.append(Finding(OK, f"Reached 80 °C after {t80:.1f} min (from {start:.0f} °C)",
+        out.append(Finding(OK, f"Reached {warm:.0f} °C after {t80:.1f} min (from {start:.0f} °C)",
                            "A normal warm-up."))
     after = run & (L.t >= t_run[reached[0]] + 60)
     if L.duration(after) >= 60:
         low = float(np.nanmin(cool[after]))
         typ = _median(cool, after)
-        if low < 75:
+        if low < warm - 5:
             out.append(Finding(WARNING, f"Coolant fell back to {low:.0f} °C after warming up",
-                               "Once warm it should stay roughly steady. Dropping well below 80 °C while "
+                               f"Once warm it should stay roughly steady. Dropping well below {warm:.0f} °C while "
                                "driving (especially at steady speed) suggests a thermostat that "
-                               "doesn't close fully.", L.runs(after & (cool < 75))))
+                               "doesn't close fully.", L.runs(after & (cool < warm - 5))))
         else:
             out.append(Finding(OK, f"Steady once warm (typically {typ:.0f} °C, lowest {low:.0f} °C)",
                                "The thermostat is holding the temperature."))
@@ -86,8 +91,8 @@ def _thermostat(L: Log) -> list[Finding]:
 
 
 # ---------------------------------------------------------------- front A/F sensor response
-def _afr_response(L: Log) -> list[Finding]:
-    S = _states(L)
+def _afr_response(L: Log, P: Profile) -> list[Finding]:
+    S = _states(L, P)
     afr = L["Air/Fuel Sensor #1 AFR"]
     cuts = L.runs(S["fuel_cut"], min_s=0.4, join_s=0.3)
     if not cuts:
@@ -132,17 +137,17 @@ def _afr_response(L: Log) -> list[Finding]:
 
 
 # ---------------------------------------------------------------- vacuum leak or sensor
-def _leak_vs_sensor(L: Log) -> list[Finding]:
-    S = _states(L)
+def _leak_vs_sensor(L: Log, P: Profile) -> list[Finding]:
+    S = _states(L, P)
     trim = L["Total Fuel Trim"]
     rpm = L["Engine Speed"]
     base = S["closed"] & S["warm"]
     idle = base & (rpm < 1000)
-    high = base & (rpm >= 2200) & (rpm <= 2900)
+    high = base & (rpm >= P.leak_rpm[0]) & (rpm <= P.leak_rpm[1])
     if L.duration(idle) < 15 or L.duration(high) < 15:
         return [Finding(INFO, "Need both a warm idle and a steady 2500 rpm",
                         f"Got {L.duration(idle):.0f} s of warm closed-loop idle and {L.duration(high):.0f} s "
-                        "near 2500 rpm; at least 15 s of each is needed (engine above 80 °C).")]
+                        f"near 2500 rpm; at least 15 s of each is needed (engine above {P.warm_c:.0f} °C).")]
     ti, th = _median(trim, idle), _median(trim, high)
     detail = f"Total fuel trim: {ti:+.1f}% at idle, {th:+.1f}% at 2500 rpm."
     if L.has("Rear O2 Sensor"):
@@ -168,7 +173,7 @@ def _leak_vs_sensor(L: Log) -> list[Finding]:
 
 
 # ---------------------------------------------------------------- battery and charging
-def _charging(L: Log) -> list[Finding]:
+def _charging(L: Log, P: Profile) -> list[Finding]:
     v = L["Battery Voltage"]
     rpm = L["Engine Speed"]
     off = rpm < 100
@@ -219,6 +224,24 @@ def _charging(L: Log) -> list[Finding]:
     return out
 
 
+# ---------------------------------------------------------------- boost pull (turbo)
+def _boost_pull(L: Log, P: Profile) -> list[Finding]:
+    if not P.turbo:
+        return [Finding(INFO, "This test is for turbo engines",
+                        f"The engine profile is {P.name}. If your engine is a turbo, choose the Turbo "
+                        "engine profile and run the test again.")]
+    S = _states(L, P)
+    out = check_boost(L, S, P)
+    if L.has("Intake Air Temperature"):
+        iat = L["Intake Air Temperature"]
+        hot = float(np.nanmax(iat[S["running"]])) if S["running"].any() else float("nan")
+        if hot > 55:
+            out.append(Finding(WARNING, f"Intake air reached {hot:.0f} °C",
+                               "Hot intake air (heat soak, a dirty or blocked intercooler) makes knock more "
+                               "likely and the ECU pulls timing. Let it cool and repeat after driving at speed."))
+    return out or [Finding(INFO, "No boost data", "The ECU didn't report manifold pressure.")]
+
+
 TESTS = [
     GuidedTest(
         "thermostat", "Warm-up and thermostat",
@@ -257,13 +280,25 @@ TESTS = [
          "Switch on the headlights, blower on full and rear demister, and press Mark (M).",
          "Wait 30 seconds, switch everything off, then press Finish."],
         ["Battery Voltage", "Engine Speed"], _charging),
+    GuidedTest(
+        "boost", "Boost pull (turbo engines)",
+        "Checks peak boost, that the engine runs rich enough under boost, and whether the ECU pulls "
+        "timing for knock.",
+        ["Warm the engine fully, and use the fuel you normally run.",
+         "Press Start.",
+         "Only where it's safe and legal: in 3rd gear from about 2500 rpm, go to full throttle and hold "
+         "it to about 5500 rpm, then lift off.",
+         "Press Finish."],
+        ["Manifold Relative Pressure", "Engine Speed"], _boost_pull),
 ]
 BY_KEY = {t.key: t for t in TESTS}
 
 
 def run(key: str, t: np.ndarray, series: dict[str, np.ndarray],
-        marks: list[float] | None = None) -> list[Finding]:
-    """Evaluate test `key` on the data between Start and Finish."""
+        marks: list[float] | None = None, profile: Profile | str | None = None) -> list[Finding]:
+    """Evaluate test `key` on the data between Start and Finish.
+
+    profile: a Profile, a profile key, or None/"auto" to pick one from the channels."""
     test = BY_KEY[key]
     L = Log(np.asarray(t, float), {k: np.asarray(v, float) for k, v in series.items()})
     L.marks = sorted(marks or [])
@@ -272,4 +307,5 @@ def run(key: str, t: np.ndarray, series: dict[str, np.ndarray],
         return [Finding(INFO, "This test needs channels that weren't logged", ", ".join(missing))]
     if len(L.t) < 10:
         return [Finding(INFO, "Too little data", "Press Start, follow the steps, then press Finish.")]
-    return test.evaluate(L)
+    P = profile if isinstance(profile, Profile) else profiles.get(profile, L.s)
+    return test.evaluate(L, P)

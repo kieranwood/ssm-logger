@@ -32,7 +32,8 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   monitor actually gets to run.
 - **Guided tests** (Tools ▸ Guided tests): step-by-step checks that judge the data from Start to
   Finish - warm-up and thermostat, front A/F sensor response, vacuum leak vs sensor (idle vs
-  2500 rpm), and battery and charging. They also run on part of a saved recording.
+  2500 rpm), battery and charging, and a boost pull for turbo engines. They also run on part of
+  a saved recording.
 - **Compare** two recordings (Tools ▸ Compare): the second is drawn dashed on the same charts,
   with a time shift to line up the same event - e.g. before and after a repair.
 - **Report** (Tools ▸ Report): one self-contained HTML page with codes, freeze frame, monitors,
@@ -40,8 +41,13 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   The VIN is left out unless you include it.
 - **Analysis**: rule-based checks aimed at fuel-trim and sensor faults - trims against
   coolant temperature and airflow, front A/F vs rear O2 sensor, A/F sensor response to fuel
-  cuts, MAF glitches, charging voltage, misfire counts. Each finding links to the time
-  ranges it is based on.
+  cuts, MAF glitches, charging voltage, misfire counts, and on turbo engines boost, fuelling
+  under boost and knock. Each finding links to the time ranges it is based on.
+- **Engine profiles** (Tools ▸ Engine profile): what counts as normal differs between engines,
+  so the analysis and guided tests use a profile - naturally aspirated 2.5 L (FB25, EJ25),
+  naturally aspirated 2.0 L (FB20, FA20, EJ20) or turbo (EJ20/EJ25 turbo, FA20DIT, FA24DIT).
+  *Automatic* picks turbo when the ECU reports a wastegate duty or the log shows boost, and NA
+  2.5 L otherwise; choose 2.0 L by hand. The numbers live in `profiles.py`.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
 
 ## Browser version
@@ -110,7 +116,7 @@ or pass `--defs` to `logger.py`. An existing RomRaider checkout at
 .venv/bin/python dtc.py --clear             # clear codes (asks first)
 .venv/bin/python dtc.py --port /dev/ttyACM0  # any command: name the cable if auto-detect fails
 
-.venv/bin/python analyse.py logs/ssm_....csv
+.venv/bin/python analyse.py logs/ssm_....csv   # --engine na25|na20|turbo (default: auto)
 .venv/bin/python probe.py [--debug]         # minimal connection test
 ```
 
@@ -139,6 +145,7 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `guided.py` | Guided tests: steps and the checks run on the data from Start to Finish |
 | `report.py` | Builds the shareable HTML report |
 | `analyse.py` | Rule-based checks on a recording |
+| `profiles.py` | Engine profiles: the engine-specific thresholds, and auto-detection |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
 | `probe.py` | Proof-of-concept connection test |
 | `web/` | Browser version: viewer, live logging over Web Serial (`openport.js`, `live.js`), demo ECU (`fake-ecu.js`), Python glue (`webapp.py`). Deployed to GitHub Pages by `.github/workflows/pages.yml` |
@@ -149,9 +156,15 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 - **Subaru only** for live logging: it reads SSM memory addresses, which other makes don't
   answer. The fault-code reader uses standard OBD-II and should work on most cars with
   500 kbit/s CAN and the engine ECU at `0x7E0`/`0x7E8`.
-- The analysis thresholds are rules of thumb for a naturally aspirated FB25 with a front
-  wideband A/F sensor and a rear narrowband O2 sensor. Findings are hints, not a diagnosis.
-- On this ECU, *A/F Correction #3* rests around −50 %, not 0 % (`C3_REST` in `analyse.py`).
+- The analysis thresholds are rules of thumb, checked against real logs only on a naturally
+  aspirated FB25 (2012 Forester). The 2.0 L and turbo profiles are educated guesses - corrections
+  from owners of those engines are welcome. Findings are hints, not a diagnosis.
+- Every check assumes a front wideband A/F sensor and a rear narrowband O2 sensor, as on
+  Subarus from about 2005 on.
+- On the FB25 ECU, *A/F Correction #3* rests around −50 %, not 0 %. Where it rests on turbo
+  ECUs isn't known, so that profile reports it without judging it.
+- Each SSM read asks for up to 84 addresses, the most the 2012 Forester ECU accepts. Other ECUs
+  may accept fewer (`MAX_ADDRESSES_PER_READ` in `sources.py` and `web/live.js`).
 
 ## Licence
 

@@ -196,6 +196,11 @@ table.rules input[type=number], .cap-window input { width: 72px; }
   background: none; border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer;
 }
 .menu button:hover { background: var(--hover); }
+.menu-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.menu-row select { flex: 1; min-width: 0; max-width: 300px; }
 body:not(.connected) .live-item { display: none; }
 body.connected .rec-item { display: none; }
 #compare-bar { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }

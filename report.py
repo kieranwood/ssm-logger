@@ -204,7 +204,7 @@ def build(title: str = "Vehicle report", *, ecu_id: str = "", source: str = "", 
         parts.append("<h2>Vehicle information</h2>" + _vehicle_html(ecu["vehicle"], include_vin))
     if findings is not None:
         parts.append("<h2>Analysis of the logged data</h2>" + _findings_html(findings)
-                     + "<p class=hint>Rules of thumb for a naturally aspirated Subaru FB25 - hints, not a diagnosis.</p>")
+                     + "<p class=hint>Rules of thumb for the engine profile named above - hints, not a diagnosis.</p>")
     if t is not None and series:
         t = np.asarray(t, float)
         shade = [r for f in (findings or []) if f.level == "problem" for r in (f.times or [])]

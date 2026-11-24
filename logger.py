@@ -34,6 +34,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import analyse
+import profiles
 import capture
 import defs
 import dtc
@@ -509,7 +510,7 @@ class AnalyseDialog(QtWidgets.QDialog):
 
     def run(self) -> None:
         t, series = self.win.data_snapshot()
-        self.findings = analyse.analyse(t, series)
+        self.findings = analyse.analyse(t, series, load_profile())
         self.tree.clear()
         for f in self.findings:
             item = QtWidgets.QTreeWidgetItem([f"{analyse.LEVEL_MARK[f.level]}  {f.title}"])
@@ -552,6 +553,16 @@ def load_capture_settings() -> capture.Settings:
 
 def save_capture_settings(st: capture.Settings) -> None:
     QtCore.QSettings("ssm-logger", "logger").setValue("capture", json.dumps(st.to_dict()))
+
+
+def load_profile() -> str:
+    """The chosen engine profile key, or "auto"."""
+    v = QtCore.QSettings("ssm-logger", "logger").value("profile", profiles.AUTO)
+    return v if v == profiles.AUTO or v in profiles.BY_KEY else profiles.AUTO
+
+
+def save_profile(key: str) -> None:
+    QtCore.QSettings("ssm-logger", "logger").setValue("profile", key)
 
 
 def load_alert_settings() -> capture.AlertSettings:
@@ -776,7 +787,8 @@ class GuidedDialog(QtWidgets.QDialog):
         t, series = self.win.data_snapshot()
         m = (t >= a) & (t <= b)
         marks = [mt for mt, _ in self.win.marks if a <= mt <= b]
-        self.findings = guided.run(self._test().key, t[m], {k: v[m] for k, v in series.items()}, marks)
+        self.findings = guided.run(self._test().key, t[m], {k: v[m] for k, v in series.items()}, marks,
+                                   load_profile())
         self.elapsed.setText(f"  checked {b - a:.0f} s of data")
         self.tree.clear()
         for f in self.findings:
@@ -865,7 +877,7 @@ class ReportDialog(QtWidgets.QDialog):
         if self.data.isChecked() and w.buf.n:
             t, series = w.data_snapshot()
             kw = dict(t=t, series=series, units={c.name: c.units for c in w.channels},
-                      findings=analyse.analyse(t, series))
+                      findings=analyse.analyse(t, series, load_profile()))
         ecu_id = w.source.ecu_id if w.live else (w.rec.info.replace("ECU ", "") if w.rec.info.startswith("ECU ") else "")
         src = "live session" if w.live else w.rec.path.name
         page = report.build(self.title.text().strip() or "Vehicle report", ecu_id=ecu_id, source=src, ecu=ecu,
@@ -995,6 +1007,15 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addAction("Guided tests…", lambda: GuidedDialog(self).show())
         menu.addAction("Compare with another recording…", self._compare_open)
         menu.addAction("Report…", lambda: ReportDialog(self).exec())
+        engine = menu.addMenu("Engine profile")
+        group = QtGui.QActionGroup(engine)
+        current = load_profile()
+        for key, label in profiles.choices():
+            act = engine.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(key == current)
+            act.triggered.connect(lambda _=False, k=key: self._set_profile(k))
+            group.addAction(act)
         if self.live:
             menu.addSeparator()
             menu.addAction("Auto-capture settings…", self._capture_settings)
@@ -1365,6 +1386,16 @@ class MainWindow(QtWidgets.QMainWindow):
     def data_snapshot(self) -> tuple[np.ndarray, dict[str, np.ndarray]]:
         t = self.buf.times.copy()
         return t, {c.name: self.buf.series(i).copy() for i, c in enumerate(self.channels)}
+
+    def _set_profile(self, key: str) -> None:
+        save_profile(key)
+        if key == profiles.AUTO:
+            t, series = self.data_snapshot() if self.buf.n else ([], {})
+            p, why = profiles.detect(series)
+            msg = f"Engine profile: automatic ({p.name} - {why})" if self.buf.n else "Engine profile: automatic"
+        else:
+            msg = f"Engine profile: {profiles.BY_KEY[key].label}"
+        self.statusBar().showMessage(msg + ". Applies to Analyse, guided tests and reports.", 8000)
 
     def _analyse(self) -> None:
         if not self.buf.n:

@@ -47,6 +47,8 @@
       <button data-act="readiness" class="live-item">Readiness tracker…</button>
       <button data-act="capset" class="live-item">Auto-capture settings…</button>
       <button data-act="alertset" class="live-item">Alert settings…</button>
+      <label class="menu-row" title="Sets what counts as normal in Analyse, guided tests and reports">Engine
+        <select id="profile"><option value="auto">Automatic</option></select></label>
     </div>
   </span>
   <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
@@ -93,7 +95,7 @@
       <button id="close-findings" class="btn small" aria-label="Close analysis">✕</button>
     </div>
     <ol id="finding-list"></ol>
-    <p class="note">Rules of thumb for a naturally aspirated Subaru FB25 - hints, not a diagnosis.
+    <p class="note">Rules of thumb for the engine profile (Tools ▸ Engine) - hints, not a diagnosis.
       Click a finding to zoom the charts to it.</p>
   </aside>
 </main>

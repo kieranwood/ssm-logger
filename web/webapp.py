@@ -13,7 +13,19 @@ import math
 import numpy as np
 
 import analyse
+import profiles
 import recording
+
+_profile = profiles.AUTO          # engine profile key chosen in the Tools menu, or "auto"
+
+
+def profile_choices() -> str:
+    return json.dumps(profiles.choices())
+
+
+def set_profile(key: str) -> None:
+    global _profile
+    _profile = key if key == profiles.AUTO or key in profiles.BY_KEY else profiles.AUTO
 
 
 def _clean(v):
@@ -28,7 +40,7 @@ def _finding_dicts(findings) -> list[dict]:
 
 
 def _findings(t: np.ndarray, series: dict[str, np.ndarray]) -> list[dict]:
-    return _finding_dicts(analyse.analyse(t, series))
+    return _finding_dicts(analyse.analyse(t, series, _profile))
 
 
 def _arrays(t_bytes, y_bytes, names: list[str]):
@@ -230,7 +242,7 @@ def guided_list() -> str:
 def guided_run(key: str, t_bytes, y_bytes, names_json: str, marks_json: str) -> str:
     import guided
     t, series = _arrays(t_bytes, y_bytes, json.loads(names_json))
-    return json.dumps(_finding_dicts(guided.run(key, t, series, json.loads(marks_json))))
+    return json.dumps(_finding_dicts(guided.run(key, t, series, json.loads(marks_json), _profile)))
 
 
 # ------------------------------------------------------------------ alerts
@@ -265,7 +277,7 @@ def report_html(js_request, opts_json: str, t_bytes, y_bytes) -> str:
     kw = {}
     if not _is_null(t_bytes):
         t, series = _arrays(t_bytes, y_bytes, opts["names"])
-        kw = dict(t=t, series=series, units=opts.get("units"), findings=analyse.analyse(t, series))
+        kw = dict(t=t, series=series, units=opts.get("units"), findings=analyse.analyse(t, series, _profile))
     return report.build(opts.get("title") or "Vehicle report", ecu_id=opts.get("ecuId", ""),
                         source=opts.get("source", ""), ecu=ecu, include_vin=opts.get("includeVin", False),
                         generated=opts.get("generated"), **kw)

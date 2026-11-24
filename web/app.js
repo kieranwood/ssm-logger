@@ -6,7 +6,8 @@
 // Nothing is uploaded anywhere.
 "use strict";
 
-const PY_MODULES = ["recording.py", "analyse.py", "defs.py", "dtc.py", "capture.py", "guided.py", "report.py"];
+const PY_MODULES = ["recording.py", "analyse.py", "defs.py", "dtc.py", "capture.py", "guided.py", "report.py",
+                    "profiles.py"];
 // Deployed site: modules are copied to py/. Local dev (serving the repo root): they sit one level up.
 const PY_BASES = ["py/", "../"];
 // Deploys stamp ?v=<commit> on app.js; reuse it so every other file is refreshed together.
@@ -74,6 +75,7 @@ async function startPython() {
   py.FS.writeFile("/home/pyodide/webapp.py", await glue);
   py.runPython("from webapp import *");
   state.py = py;
+  setupProfiles();
   setStatus("");
   return py;
 }
@@ -422,9 +424,9 @@ function selectFinding(li, f) {
   redrawAll();
 }
 
-function analyseNow() {
+function analyseNow(fresh = false) {
   const rec = state.rec;
-  if (!rec.live) {
+  if (!rec.live && !fresh) {
     showFindings(rec.findings, "Analysis");
     return;
   }
@@ -1243,6 +1245,7 @@ $("tools").addEventListener("click", (e) => {
 });
 document.addEventListener("click", () => { $("tools-menu").hidden = true; $("tools").setAttribute("aria-expanded", "false"); });
 $("tools-menu").addEventListener("click", (e) => {
+  if (e.target.closest(".menu-row")) { e.stopPropagation(); return; }   // the engine selector
   const act = e.target.closest("button")?.dataset.act;
   $("tools-menu").hidden = true;
   if (act === "guided") openGuided();
@@ -1252,6 +1255,33 @@ $("tools-menu").addEventListener("click", (e) => {
   else if (act === "capset") openCapSettings();
   else if (act === "alertset") openAlertSettings();
 });
+// ------------------------------------------------------------------ engine profile
+
+const PROFILE_KEY = "ssm-logger.profile";
+
+function setupProfiles() {
+  const sel = $("profile");
+  sel.replaceChildren();
+  for (const [key, label] of JSON.parse(state.py.globals.get("profile_choices")())) {
+    sel.append(new Option(label, key));
+  }
+  let saved = "auto";
+  try { saved = localStorage.getItem(PROFILE_KEY) || "auto"; } catch { /* private mode */ }
+  if ([...sel.options].some((o) => o.value === saved)) sel.value = saved;
+  state.py.globals.get("set_profile")(sel.value);
+}
+
+$("profile").addEventListener("change", (e) => {
+  const key = e.target.value;
+  try { localStorage.setItem(PROFILE_KEY, key); } catch { /* private mode */ }
+  state.py.globals.get("set_profile")(key);
+  $("tools-menu").hidden = true;
+  const label = e.target.selectedOptions[0].textContent;
+  setStatus(`Engine profile: ${label}`);
+  // refresh an open analysis so it reflects the new thresholds
+  if (state.rec && !$("findings").hidden && $("findings-title").textContent === "Analysis") analyseNow(true);
+});
+
 $("compare-file").addEventListener("change", (e) => { openCompare(e.target.files[0]); e.target.value = ""; });
 $("compare-close").addEventListener("click", closeCompare);
 $("compare-shift").addEventListener("change", (e) => {
