@@ -4,6 +4,12 @@ A live data logger, fault-code reader and fuel-trim analyser for Subaru ECUs tha
 SSM over CAN, using a **Tactrix OpenPort 2.0** cable on macOS (Linux should work but is untested). Written for and tested on a
 2012 Forester (FB25, ECU `7152345007`).
 
+![The logger reviewing a recording from a car with a failing front A/F sensor](docs/screenshot.png)
+
+*Reviewing a recording of a P0171 (system too lean) fault on a 2012 Forester. Fuel trim climbs
+to about +35% and only drops back after fuel cuts. The front A/F sensor reads flat 14.7 AFR
+while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
+
 ## Features
 
 - **Live logging** of every SSM parameter the ECU reports as supported, charted in real
