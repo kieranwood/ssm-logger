@@ -37,6 +37,8 @@ import analyse
 import capture
 import defs
 import dtc
+import guided
+import report
 import recording
 from recording import Channel
 from sources import DemoSource, EcuSource, Source
@@ -54,6 +56,9 @@ DEFAULT_CHANNELS = [
 
 COLORS = ["#4e9fff", "#ff8a3d", "#3ecf8e", "#e5484d", "#b97cff", "#f5c542",
           "#2ec4d6", "#ff6fae", "#9aa5b1"]
+
+
+from html import escape as html_escape
 
 
 def build_channels(params: list[defs.Parameter]) -> list[Channel]:
@@ -196,9 +201,21 @@ class DtcDialog(QtWidgets.QDialog):
         rl.addWidget(QtWidgets.QLabel(
             "<b>Readiness monitors</b> - the ECU's self-tests. A fault can only set a "
             "code once the test that checks it has run."))
-        self.monitors = tree(["Monitor", "Since cleared", "This drive"], 0)
+        self.monitors = tree(["Monitor", "Since cleared", "This drive", "How to complete"], 3)
+        self.monitors.setWordWrap(True)
+        for col in range(3):
+            self.monitors.header().setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeToContents)
         rl.addWidget(self.monitors, 2)
+        self.recheck = QtWidgets.QCheckBox("Recheck every 30 s while this window is open - watch monitors "
+                                           "complete as you drive")
+        self.recheck.toggled.connect(self._recheck_toggled)
+        rl.addWidget(self.recheck)
+        self.recheck_lbl = QtWidgets.QLabel("")
+        self.recheck_lbl.setWordWrap(True)
+        rl.addWidget(self.recheck_lbl)
         self.tabs.addTab(ready, "Readiness")
+        self._last_monitors: dict[str, str] = {}
+        self.recheck_timer = QtCore.QTimer(self, interval=30_000, timeout=self._recheck)
 
         tests_page = QtWidgets.QWidget()
         tl = QtWidgets.QVBoxLayout(tests_page)
@@ -210,6 +227,22 @@ class DtcDialog(QtWidgets.QDialog):
         self.tests.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         tl.addWidget(self.tests)
         self.tabs.addTab(tests_page, "Test results")
+
+        veh = QtWidgets.QWidget()
+        vl = QtWidgets.QVBoxLayout(veh)
+        self.vehicle = tree(["", ""], 1)
+        self.vehicle.setHeaderHidden(True)
+        self.vehicle.header().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        vl.addWidget(self.vehicle, 1)
+        iupr_lbl = QtWidgets.QLabel(
+            "<b>How often each monitor gets to run</b> - completed: times the monitor ran; chances: "
+            "drives where its conditions were met. A low ratio is why a readiness monitor can take a "
+            "while to complete.")
+        iupr_lbl.setWordWrap(True)
+        vl.addWidget(iupr_lbl)
+        self.iupr = tree(["Monitor", "Completed", "Chances", "Ratio"], 0)
+        vl.addWidget(self.iupr, 1)
+        self.tabs.addTab(veh, "Vehicle")
 
         self.msg = QtWidgets.QLabel("")
         self.msg.setWordWrap(True)
@@ -263,8 +296,66 @@ class DtcDialog(QtWidgets.QDialog):
 
     def read(self) -> None:
         self._start(lambda req: (dtc.read_all(req), dtc.read_freeze_frame(req), dtc.read_status(req),
-                                 dtc.read_test_results(req)),
-                    self._show, "Reading codes, freeze frame, monitor status and test results…", 60)
+                                 dtc.read_test_results(req), dtc.read_vehicle_info(req)),
+                    self._show, "Reading codes, freeze frame, monitors, test results and vehicle info…", 75)
+
+    def _recheck_toggled(self, on: bool) -> None:
+        if on:
+            self.recheck_timer.start()
+            self._recheck()
+        else:
+            self.recheck_timer.stop()
+
+    def _recheck(self) -> None:
+        if self._future is not None and not self._future.done():
+            return                                   # a read is still running
+        self._start(dtc.read_status, self._show_status_only, "Checking readiness…", 25)
+
+    def _show_status_only(self, status: dtc.ObdStatus) -> None:
+        self._show_monitors(status)
+        self.msg.setText(f"Readiness checked at {time.strftime('%H:%M:%S')}.")
+
+    def _show_monitors(self, status: dtc.ObdStatus) -> None:
+        self.info.clear()
+        for label, value in dtc.status_summary(status):
+            QtWidgets.QTreeWidgetItem(self.info, [label, value])
+        for err in status.errors or []:
+            QtWidgets.QTreeWidgetItem(self.info, ["", f"({err})"])
+        self.monitors.clear()
+        warn = QtGui.QBrush(QtGui.QColor("#d9822b"))
+        done = QtGui.QBrush(QtGui.QColor("#3ecf8e"))
+        newly = []
+        for m in status.monitors or []:
+            hint = dtc.MONITOR_HINTS.get(m.name, "") if m.since_clear == "NOT complete" else ""
+            item = QtWidgets.QTreeWidgetItem(self.monitors, [m.name, m.since_clear, m.this_drive, hint])
+            item.setToolTip(3, hint)
+            for col, val in ((1, m.since_clear), (2, m.this_drive)):
+                if val == "NOT complete":
+                    item.setForeground(col, warn)
+            before = self._last_monitors.get(m.name)
+            if before == "NOT complete" and m.since_clear == "complete":
+                newly.append(m.name)
+                item.setForeground(1, done)
+        if newly:
+            self.recheck_lbl.setText(f"Completed at {time.strftime('%H:%M')}: {', '.join(newly)}")
+        self._last_monitors = {m.name: m.since_clear for m in status.monitors or []}
+
+    def _show_vehicle(self, vi: dtc.VehicleInfo) -> None:
+        self.vehicle.clear()
+        self.iupr.clear()
+        if vi.error:
+            QtWidgets.QTreeWidgetItem(self.vehicle, ["", f"({vi.error})"])
+            return
+        rows = [("VIN", vi.vin), ("ECU", vi.ecu_name)]
+        for i, c in enumerate(vi.calibration_ids or []):
+            rows.append(("Calibration ID", c + (f"  (CVN {vi.cvns[i]})" if vi.cvns and i < len(vi.cvns) else "")))
+        if vi.obd_conditions is not None:
+            rows.append(("Qualifying drives / ignition cycles", f"{vi.obd_conditions} / {vi.ignition_cycles}"))
+        for a, b in rows:
+            if b:
+                QtWidgets.QTreeWidgetItem(self.vehicle, [a, b])
+        for name, comp, cond in vi.iupr or []:
+            QtWidgets.QTreeWidgetItem(self.iupr, [name, str(comp), str(cond), f"{comp / cond:.2f}" if cond else "-"])
 
     def _show_tests(self, tr: dtc.TestResults) -> None:
         self.tests.clear()
@@ -291,11 +382,12 @@ class DtcDialog(QtWidgets.QDialog):
             if t.status in colors:
                 for col in range(4):
                     item.setForeground(col, QtGui.QBrush(colors[t.status]))
-        self.tabs.setTabText(3, f"Test results ●" if failed or near else "Test results")
+        self.tabs.setTabText(3, "Test results ●" if failed or near else "Test results")
 
-    def _show(self, result: tuple[list[dtc.DtcResult], dtc.FreezeFrame, dtc.ObdStatus, dtc.TestResults]) -> None:
-        results, ff, status, tests = result
+    def _show(self, result) -> None:
+        results, ff, status, tests, vehicle = result
         self._show_tests(tests)
+        self._show_vehicle(vehicle)
         self.ff.clear()
         if ff.error:
             self.ff_label.setText(f"({ff.error})")
@@ -306,18 +398,7 @@ class DtcDialog(QtWidgets.QDialog):
             for name, value in ff.values:
                 QtWidgets.QTreeWidgetItem(self.ff, [name, value])
         self.tabs.setTabText(1, "Freeze frame ●" if ff.code else "Freeze frame")
-        self.info.clear()
-        for label, value in dtc.status_summary(status):
-            QtWidgets.QTreeWidgetItem(self.info, [label, value])
-        for err in status.errors or []:
-            QtWidgets.QTreeWidgetItem(self.info, ["", f"({err})"])
-        self.monitors.clear()
-        warn = QtGui.QBrush(QtGui.QColor("#d9822b"))
-        for m in status.monitors or []:
-            item = QtWidgets.QTreeWidgetItem(self.monitors, [m.name, m.since_clear, m.this_drive])
-            for col, val in ((1, m.since_clear), (2, m.this_drive)):
-                if val == "NOT complete":
-                    item.setForeground(col, warn)
+        self._show_monitors(status)
         self.tree.clear()
         total = 0
         for r in results:
@@ -335,7 +416,8 @@ class DtcDialog(QtWidgets.QDialog):
             path = LOG_DIR / time.strftime("codes_%Y%m%d_%H%M%S.txt")
             path.write_text(f"ECU {self.source.ecu_id}\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                             f"{dtc.format_results(results)}\n\n{dtc.format_freeze_frame(ff)}\n\n"
-                            f"{dtc.format_status(status)}\n\n{dtc.format_test_results(tests)}\n")
+                            f"{dtc.format_status(status)}\n\n{dtc.format_test_results(tests)}\n\n"
+                            f"{dtc.format_vehicle_info(vehicle)}\n")
             note = f" Saved a copy to {path.name}."
         self.msg.setText(f"{total} code(s) found. Read at {time.strftime('%H:%M:%S')}.{note}")
 
@@ -472,28 +554,36 @@ def save_capture_settings(st: capture.Settings) -> None:
     QtCore.QSettings("ssm-logger", "logger").setValue("capture", json.dumps(st.to_dict()))
 
 
-class CaptureDialog(QtWidgets.QDialog):
-    """Edit auto-capture triggers and the capture window."""
+def load_alert_settings() -> capture.AlertSettings:
+    raw = QtCore.QSettings("ssm-logger", "logger").value("alerts", "")
+    try:
+        return capture.AlertSettings.from_dict(json.loads(raw)) if raw else capture.AlertSettings()
+    except (ValueError, TypeError):
+        return capture.AlertSettings()
 
-    def __init__(self, settings: capture.Settings, channel_names: list[str], parent=None):
+
+def save_alert_settings(st: capture.AlertSettings) -> None:
+    QtCore.QSettings("ssm-logger", "logger").setValue("alerts", json.dumps(st.to_dict()))
+
+
+class RulesDialog(QtWidgets.QDialog):
+    """Edit a list of channel rules plus a few extra options (auto-capture or alerts)."""
+
+    def __init__(self, title: str, intro: str, rules: list[capture.Rule], channel_names: list[str], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Auto-capture")
+        self.setWindowTitle(title)
         self.resize(720, 460)
         self.names = channel_names
         lay = QtWidgets.QVBoxLayout(self)
-        intro = QtWidgets.QLabel(
-            "While auto-capture is on, a trigger saves the data from <b>before</b> it fired until "
-            "<b>after</b> it, as a separate recording in logs/ (…_capture.csv) - whether or not "
-            "you are recording. <b>C</b> captures now.")
-        intro.setWordWrap(True)
-        lay.addWidget(intro)
-
+        label = QtWidgets.QLabel(intro)
+        label.setWordWrap(True)
+        lay.addWidget(label)
         self.table = QtWidgets.QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["On", "Channel", "", "Value", "Hold (s)"])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         lay.addWidget(self.table)
-        for r in settings.rules:
+        for r in rules:
             self._add_row(r)
         row = QtWidgets.QHBoxLayout()
         add = QtWidgets.QPushButton("Add rule")
@@ -504,30 +594,12 @@ class CaptureDialog(QtWidgets.QDialog):
         row.addWidget(rm)
         row.addStretch()
         lay.addLayout(row)
-
-        form = QtWidgets.QFormLayout()
-        self.on_code = QtWidgets.QCheckBox("New stored or pending fault code (checked every "
-                                           f"{capture.POLL_CODES_S:.0f} s)")
-        self.on_code.setChecked(settings.on_new_code)
-        form.addRow(self.on_code)
-        self.running = QtWidgets.QCheckBox("Ignore channel rules while the engine is off (below 400 rpm)")
-        self.running.setChecked(settings.running_only)
-        form.addRow(self.running)
-
-        def secs(v):
-            sp = QtWidgets.QDoubleSpinBox(minimum=1, maximum=600, decimals=0, suffix=" s")
-            sp.setValue(v)
-            return sp
-        self.before = secs(settings.before_s)
-        self.after = secs(settings.after_s)
-        form.addRow("Keep before the trigger", self.before)
-        form.addRow("Keep after the trigger", self.after)
-        lay.addLayout(form)
-
-        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        lay.addWidget(buttons)
+        self.form = QtWidgets.QFormLayout()
+        lay.addLayout(self.form)
+        self._buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        self._buttons.accepted.connect(self.accept)
+        self._buttons.rejected.connect(self.reject)
+        lay.addWidget(self._buttons)
 
     def _add_row(self, rule: capture.Rule) -> None:
         r = self.table.rowCount()
@@ -551,18 +623,259 @@ class CaptureDialog(QtWidgets.QDialog):
         hold.setValue(rule.hold_s)
         self.table.setCellWidget(r, 4, hold)
 
-    def settings(self) -> capture.Settings:
-        rules = []
+    def rules(self) -> list[capture.Rule]:
+        out = []
         for r in range(self.table.rowCount()):
-            rules.append(capture.Rule(
-                channel=self.table.cellWidget(r, 1).currentText().strip(),
-                op=self.table.cellWidget(r, 2).currentText(),
-                value=self.table.cellWidget(r, 3).value(),
-                hold_s=self.table.cellWidget(r, 4).value(),
-                enabled=self.table.item(r, 0).checkState() == QtCore.Qt.Checked))
-        return capture.Settings(rules=rules, on_new_code=self.on_code.isChecked(),
+            name = self.table.cellWidget(r, 1).currentText().strip()
+            if name:
+                out.append(capture.Rule(channel=name, op=self.table.cellWidget(r, 2).currentText(),
+                                        value=self.table.cellWidget(r, 3).value(),
+                                        hold_s=self.table.cellWidget(r, 4).value(),
+                                        enabled=self.table.item(r, 0).checkState() == QtCore.Qt.Checked))
+        return out
+
+
+class CaptureDialog(RulesDialog):
+    """Edit auto-capture triggers and the capture window."""
+
+    def __init__(self, settings: capture.Settings, channel_names: list[str], parent=None):
+        super().__init__("Auto-capture",
+                         "While auto-capture is on, a trigger saves the data from <b>before</b> it fired "
+                         "until <b>after</b> it, as a separate recording in logs/ (…_capture.csv) - "
+                         "whether or not you are recording. <b>C</b> captures now.",
+                         settings.rules, channel_names, parent)
+        self.on_code = QtWidgets.QCheckBox("New stored or pending fault code (checked every "
+                                           f"{capture.POLL_CODES_S:.0f} s)")
+        self.on_code.setChecked(settings.on_new_code)
+        self.form.addRow(self.on_code)
+        self.running = QtWidgets.QCheckBox("Ignore channel rules while the engine is off (below 400 rpm)")
+        self.running.setChecked(settings.running_only)
+        self.form.addRow(self.running)
+
+        def secs(v):
+            sp = QtWidgets.QDoubleSpinBox(minimum=1, maximum=600, decimals=0, suffix=" s")
+            sp.setValue(v)
+            return sp
+        self.before = secs(settings.before_s)
+        self.after = secs(settings.after_s)
+        self.form.addRow("Keep before the trigger", self.before)
+        self.form.addRow("Keep after the trigger", self.after)
+
+    def settings(self) -> capture.Settings:
+        return capture.Settings(rules=self.rules(), on_new_code=self.on_code.isChecked(),
                                 before_s=self.before.value(), after_s=self.after.value(),
                                 running_only=self.running.isChecked())
+
+
+class AlertDialog(RulesDialog):
+    def __init__(self, settings: capture.AlertSettings, channel_names: list[str], parent=None):
+        super().__init__("Alerts",
+                         "While alerts are on, a red banner shows any rule that is currently true "
+                         "(after its hold time), with a beep when it starts.",
+                         settings.rules, channel_names, parent)
+        self.sound = QtWidgets.QCheckBox("Beep when an alert starts")
+        self.sound.setChecked(settings.sound)
+        self.form.addRow(self.sound)
+        self.running = QtWidgets.QCheckBox("Ignore rules while the engine is off (below 400 rpm)")
+        self.running.setChecked(settings.running_only)
+        self.form.addRow(self.running)
+
+    def settings(self) -> capture.AlertSettings:
+        return capture.AlertSettings(rules=self.rules(), sound=self.sound.isChecked(),
+                                     running_only=self.running.isChecked())
+
+
+class GuidedDialog(QtWidgets.QDialog):
+    """Pick a guided test, follow its steps, then check the data from Start to Finish."""
+
+    COLORS = AnalyseDialog.COLORS
+
+    def __init__(self, win: "MainWindow"):
+        super().__init__(win)
+        self.win = win
+        self.setWindowTitle("Guided tests")
+        self.resize(680, 640)
+        self.t_start: float | None = None
+        lay = QtWidgets.QVBoxLayout(self)
+        self.combo = QtWidgets.QComboBox()
+        for test in guided.TESTS:
+            self.combo.addItem(test.name, test.key)
+        self.combo.currentIndexChanged.connect(self._describe)
+        lay.addWidget(self.combo)
+        self.text = QtWidgets.QTextBrowser()
+        self.text.setMaximumHeight(210)
+        lay.addWidget(self.text)
+        row = QtWidgets.QHBoxLayout()
+        if win.live:
+            self.start_btn = QtWidgets.QPushButton("Start")
+            self.start_btn.clicked.connect(self._start)
+            self.finish_btn = QtWidgets.QPushButton("Finish and check")
+            self.finish_btn.setEnabled(False)
+            self.finish_btn.clicked.connect(self._finish)
+            row.addWidget(self.start_btn)
+            row.addWidget(self.finish_btn)
+        else:
+            check = QtWidgets.QPushButton("Check the visible part of the recording")
+            check.clicked.connect(self._check_visible)
+            row.addWidget(check)
+        self.elapsed = QtWidgets.QLabel("")
+        row.addWidget(self.elapsed)
+        row.addStretch()
+        lay.addLayout(row)
+        self.tree = QtWidgets.QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setRootIsDecorated(False)
+        self.tree.currentItemChanged.connect(self._selected)
+        self.tree.itemDoubleClicked.connect(lambda *_: self._jump())
+        lay.addWidget(self.tree, 1)
+        self.detail = QtWidgets.QTextBrowser()
+        self.detail.setMaximumHeight(140)
+        lay.addWidget(self.detail)
+        self.findings: list[analyse.Finding] = []
+        self.timer = QtCore.QTimer(self, interval=500, timeout=self._tick)
+        self._describe()
+
+    def _test(self) -> guided.GuidedTest:
+        return guided.BY_KEY[self.combo.currentData()]
+
+    def _describe(self, *_) -> None:
+        t = self._test()
+        steps = "".join(f"<li>{html_escape(s)}</li>" for s in t.steps)
+        self.text.setHtml(f"<p>{html_escape(t.purpose)}</p><ol>{steps}</ol>"
+                          f"<p style='color:#8a94a0'>Needs: {html_escape(', '.join(t.needs))}</p>")
+
+    def _start(self) -> None:
+        if not self.win.buf.n:
+            return
+        self.t_start = float(self.win.buf.times[-1])
+        self.combo.setEnabled(False)
+        self.start_btn.setText("Restart")
+        self.finish_btn.setEnabled(True)
+        self.tree.clear()
+        self.detail.clear()
+        self.timer.start()
+
+    def _tick(self) -> None:
+        if self.t_start is not None and self.win.buf.n:
+            self.elapsed.setText(f"  running for {float(self.win.buf.times[-1]) - self.t_start:.0f} s")
+
+    def _finish(self) -> None:
+        self.timer.stop()
+        self.combo.setEnabled(True)
+        self.start_btn.setText("Start")
+        self.finish_btn.setEnabled(False)
+        t_end = float(self.win.buf.times[-1])
+        self._run(self.t_start, t_end)
+        self.t_start = None
+
+    def _check_visible(self) -> None:
+        a, b = self.win._view()
+        self._run(a, b)
+
+    def _run(self, a: float, b: float) -> None:
+        t, series = self.win.data_snapshot()
+        m = (t >= a) & (t <= b)
+        marks = [mt for mt, _ in self.win.marks if a <= mt <= b]
+        self.findings = guided.run(self._test().key, t[m], {k: v[m] for k, v in series.items()}, marks)
+        self.elapsed.setText(f"  checked {b - a:.0f} s of data")
+        self.tree.clear()
+        for f in self.findings:
+            item = QtWidgets.QTreeWidgetItem([f"{analyse.LEVEL_MARK[f.level]}  {f.title}"])
+            item.setForeground(0, QtGui.QBrush(QtGui.QColor(self.COLORS[f.level])))
+            self.tree.addTopLevelItem(item)
+        if self.findings:
+            self.tree.setCurrentItem(self.tree.topLevelItem(0))
+
+    def _selected(self, *_) -> None:
+        i = self.tree.indexOfTopLevelItem(self.tree.currentItem()) if self.tree.currentItem() else -1
+        if 0 <= i < len(self.findings):
+            f = self.findings[i]
+            self.detail.setHtml(f"<b style='color:{self.COLORS[f.level]}'>{html_escape(f.title)}</b>"
+                                f"<p>{html_escape(f.detail)}</p>")
+
+    def _jump(self) -> None:
+        i = self.tree.indexOfTopLevelItem(self.tree.currentItem()) if self.tree.currentItem() else -1
+        if 0 <= i < len(self.findings) and self.findings[i].times:
+            ts = self.findings[i].times
+            self.win.show_range(ts[0][0], ts[-1][1])
+
+
+class ReportDialog(QtWidgets.QDialog):
+    """Build a shareable HTML report and open it in the browser."""
+
+    def __init__(self, win: "MainWindow"):
+        super().__init__(win)
+        self.win = win
+        self.setWindowTitle("Report")
+        lay = QtWidgets.QFormLayout(self)
+        self.title = QtWidgets.QLineEdit("Vehicle report")
+        lay.addRow("Title", self.title)
+        self.ecu = QtWidgets.QCheckBox("Fault codes, freeze frame, monitors, test results and vehicle info from the ECU")
+        self.ecu.setChecked(win.live)
+        self.ecu.setEnabled(win.live)
+        lay.addRow(self.ecu)
+        self.vin = QtWidgets.QCheckBox("Include the VIN (left out by default since reports are usually shared)")
+        lay.addRow(self.vin)
+        self.data = QtWidgets.QCheckBox("Analysis and charts of the logged data")
+        self.data.setChecked(True)
+        lay.addRow(self.data)
+        self.msg = QtWidgets.QLabel("")
+        self.msg.setWordWrap(True)
+        lay.addRow(self.msg)
+        self.buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Cancel)
+        self.go = self.buttons.addButton("Create report", QtWidgets.QDialogButtonBox.AcceptRole)
+        self.buttons.accepted.connect(self._create)
+        self.buttons.rejected.connect(self.reject)
+        lay.addRow(self.buttons)
+        self._future = None
+        self._deadline = 0.0
+        self.timer = QtCore.QTimer(self, interval=100, timeout=self._poll)
+
+    def _create(self) -> None:
+        self.go.setEnabled(False)
+        if self.ecu.isChecked():
+            self.msg.setText("Reading the ECU…")
+            self._future = self.win.source.submit(report.gather_ecu)
+            self._deadline = time.monotonic() + 90
+            self.timer.start()
+        else:
+            self._write(None)
+
+    def _poll(self) -> None:
+        fut = self._future
+        if not fut.done():
+            if time.monotonic() > self._deadline:
+                fut.cancel()
+                self.timer.stop()
+                self.msg.setText("Timed out - not connected to the ECU.")
+                self.go.setEnabled(True)
+            return
+        self.timer.stop()
+        try:
+            ecu = fut.result()
+        except Exception as e:
+            self.msg.setText(f"Error reading the ECU: {e}")
+            self.go.setEnabled(True)
+            return
+        self._write(ecu)
+
+    def _write(self, ecu: dict | None) -> None:
+        w = self.win
+        kw = {}
+        if self.data.isChecked() and w.buf.n:
+            t, series = w.data_snapshot()
+            kw = dict(t=t, series=series, units={c.name: c.units for c in w.channels},
+                      findings=analyse.analyse(t, series))
+        ecu_id = w.source.ecu_id if w.live else (w.rec.info.replace("ECU ", "") if w.rec.info.startswith("ECU ") else "")
+        src = "live session" if w.live else w.rec.path.name
+        page = report.build(self.title.text().strip() or "Vehicle report", ecu_id=ecu_id, source=src, ecu=ecu,
+                            include_vin=self.vin.isChecked(), **kw)
+        LOG_DIR.mkdir(exist_ok=True)
+        path = LOG_DIR / time.strftime("report_%Y%m%d_%H%M%S.html")
+        path.write_text(page, encoding="utf-8")
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(path)))
+        w.statusBar().showMessage(f"Report saved to {path}", 15000)
+        self.accept()
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -592,6 +905,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.capturer = capture.Capturer(load_capture_settings(), [c.name for c in self.channels])
             self._codes_future = None
             self._codes_next = 0.0
+            self.alerter = capture.Alerter(load_alert_settings(), [c.name for c in self.channels])
+            self.alerts_on = True
+        self.compare: recording.Recording | None = None
+        self.compare_shift = 0.0
+        self._dtc_dialog = None
         self.plots: dict[int, tuple[pg.PlotItem, pg.PlotDataItem, pg.InfiniteLine]] = {}
         self._bar_guard = False
         self.cursor_t: float | None = None
@@ -610,6 +928,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rebuild_plots()
 
         if self.live:
+            self.hint.setVisible(False)
             self.timer = QtCore.QTimer(self)
             self.timer.timeout.connect(self._tick)
             self.timer.start(50)
@@ -652,8 +971,14 @@ class MainWindow(QtWidgets.QMainWindow):
             cap_now.clicked.connect(self._capture_now)
             tb.addWidget(cap_now)
             QtGui.QShortcut(QtGui.QKeySequence("C"), self, activated=self._capture_now)
+            self.alert_btn = QtWidgets.QPushButton("⚠ Alerts on")
+            self.alert_btn.setCheckable(True)
+            self.alert_btn.setChecked(True)
+            self.alert_btn.setToolTip("Warn when a value crosses a limit (rules under Tools ▸ Alert settings)")
+            self.alert_btn.toggled.connect(self._toggle_alerts)
+            tb.addWidget(self.alert_btn)
             dtc_btn = QtWidgets.QPushButton("Fault codes…")
-            dtc_btn.clicked.connect(lambda: DtcDialog(self.source, self).exec())
+            dtc_btn.clicked.connect(self._show_dtc)
             tb.addWidget(dtc_btn)
             tb.addSeparator()
         open_btn = QtWidgets.QPushButton("Open recording…")
@@ -663,6 +988,36 @@ class MainWindow(QtWidgets.QMainWindow):
         analyse_btn.setToolTip("Run fixed checks for fuel trim, sensor and charging problems")
         analyse_btn.clicked.connect(self._analyse)
         tb.addWidget(analyse_btn)
+        tools = QtWidgets.QToolButton()
+        tools.setText("Tools ▾")
+        tools.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        menu = QtWidgets.QMenu(tools)
+        menu.addAction("Guided tests…", lambda: GuidedDialog(self).show())
+        menu.addAction("Compare with another recording…", self._compare_open)
+        menu.addAction("Report…", lambda: ReportDialog(self).exec())
+        if self.live:
+            menu.addSeparator()
+            menu.addAction("Auto-capture settings…", self._capture_settings)
+            menu.addAction("Alert settings…", self._alert_settings)
+        tools.setMenu(menu)
+        tb.addWidget(tools)
+        self.compare_box = QtWidgets.QWidget()
+        cl = QtWidgets.QHBoxLayout(self.compare_box)
+        cl.setContentsMargins(6, 0, 0, 0)
+        self.compare_lbl = QtWidgets.QLabel()
+        self.compare_lbl.setStyleSheet("font-style:italic;")
+        cl.addWidget(self.compare_lbl)
+        cl.addWidget(QtWidgets.QLabel("shift"))
+        self.shift_spin = QtWidgets.QDoubleSpinBox(minimum=-36000, maximum=36000, decimals=1, suffix=" s")
+        self.shift_spin.setToolTip("Move the comparison recording in time to line up the same event")
+        self.shift_spin.valueChanged.connect(self._compare_shift_changed)
+        cl.addWidget(self.shift_spin)
+        close_cmp = QtWidgets.QPushButton("✕")
+        close_cmp.setToolTip("Stop comparing")
+        close_cmp.clicked.connect(self._compare_close)
+        cl.addWidget(close_cmp)
+        self.compare_box.setVisible(False)
+        tb.addWidget(self.compare_box)
         tb.addSeparator()
         tb.addWidget(QtWidgets.QLabel(" Window: "))
         self.win_combo = QtWidgets.QComboBox()
@@ -715,6 +1070,10 @@ class MainWindow(QtWidgets.QMainWindow):
         rl = QtWidgets.QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(2)
+        self.alert_banner = QtWidgets.QLabel()
+        self.alert_banner.setStyleSheet("background:#c62828;color:white;font-weight:600;padding:6px 10px;")
+        self.alert_banner.setVisible(False)
+        rl.addWidget(self.alert_banner)
         self.plot_scroll = QtWidgets.QScrollArea()
         self.plot_scroll.setWidgetResizable(True)
         self.glw = ScrollingPlots(self.plot_scroll, self._pan_pixels)
@@ -781,6 +1140,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 p.getAxis("bottom").setStyle(showValues=False)
             else:
                 p.setLabel("bottom", "time", "s")
+            if self.compare is not None:
+                cmp_curve = p.plot(pen=pg.mkPen((255, 255, 255, 150), width=1.2, style=QtCore.Qt.DashLine),
+                                   connect="finite")
+                cmp_curve.setClipToView(True)
+                cmp_curve.setDownsampling(auto=True, method="peak")
+                p._compare_curve = cmp_curve
             curve = p.plot(pen=pg.mkPen(COLORS[k % len(COLORS)], width=1.5), connect="finite")
             curve.setClipToView(True)
             curve.setDownsampling(auto=True, method="peak")
@@ -922,6 +1287,53 @@ class MainWindow(QtWidgets.QMainWindow):
         t = self.buf.times
         for i, (p, curve, _) in self.plots.items():
             curve.setData(t, self.buf.series(i))
+        self._refresh_compare()
+
+    # ---------------------------------------------------------------- compare
+    def _refresh_compare(self) -> None:
+        cmp = self.compare
+        if cmp is None:
+            return
+        names = {c.name: k for k, c in enumerate(cmp.channels)}
+        for i, (p, _, _) in self.plots.items():
+            curve = getattr(p, "_compare_curve", None)
+            if curve is None:
+                continue
+            k = names.get(self.channels[i].name)
+            if k is None:
+                curve.setData([], [])
+            else:
+                curve.setData(cmp.t + self.compare_shift, cmp.y[k])
+
+    def _compare_open(self) -> None:
+        start = str(LOG_DIR) if LOG_DIR.is_dir() else ""
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Compare with recording", start, "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            cmp = recording.load_csv(path)
+        except (OSError, ValueError) as e:
+            QtWidgets.QMessageBox.warning(self, "Could not open recording", f"{path}\n\n{e}")
+            return
+        # line the comparison's start up with this recording's start
+        self.compare = cmp
+        base = float(self.buf.times[0]) if self.buf.n else 0.0
+        self.shift_spin.blockSignals(True)
+        self.shift_spin.setValue(round(base - float(cmp.t[0]), 1))
+        self.shift_spin.blockSignals(False)
+        self.compare_shift = self.shift_spin.value()
+        self.compare_lbl.setText(f"Comparing: {cmp.path.name} (dashed)")
+        self.compare_box.setVisible(True)
+        self._rebuild_plots()
+
+    def _compare_shift_changed(self, v: float) -> None:
+        self.compare_shift = v
+        self._refresh_compare()
+
+    def _compare_close(self) -> None:
+        self.compare = None
+        self.compare_box.setVisible(False)
+        self._rebuild_plots()
 
     def _value_index(self) -> int | None:
         t = self.buf.times
@@ -1010,6 +1422,30 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.statusBar().showMessage("Auto-capture: this ECU doesn't log " + ", ".join(missing)
                                              + " - those rules are ignored", 15000)
 
+    def _toggle_alerts(self, on: bool) -> None:
+        self.alerts_on = on
+        self.alert_btn.setText("⚠ Alerts on" if on else "⚠ Alerts off")
+        if not on:
+            self.alert_banner.setVisible(False)
+
+    def _alert_settings(self) -> None:
+        dlg = AlertDialog(self.alerter.settings, [c.name for c in self.channels], self)
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            st = dlg.settings()
+            save_alert_settings(st)
+            self.alerter = capture.Alerter(st, [c.name for c in self.channels])
+            missing = self.alerter.missing_channels()
+            if missing:
+                self.statusBar().showMessage("Alerts: this ECU doesn't log " + ", ".join(missing), 15000)
+
+    def _show_dtc(self) -> None:
+        if self._dtc_dialog is None:
+            self._dtc_dialog = DtcDialog(self.source, self)
+            self._dtc_dialog.finished.connect(lambda *_: setattr(self, "_dtc_dialog", None))
+            self._dtc_dialog.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        self._dtc_dialog.show()
+        self._dtc_dialog.raise_()
+
     def _capture_settings(self) -> None:
         dlg = CaptureDialog(self.capturer.settings, [c.name for c in self.channels], self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
@@ -1063,11 +1499,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 if self.capturer.pending is not before:
                     self._mark()
                     self.statusBar().showMessage(f"Auto-capture triggered: {self.capturer.pending[1]}", 10000)
+            if self.alerts_on and self.alerter.update(t, row) and self.alerter.settings.sound:
+                QtWidgets.QApplication.beep()
             if self.recorder:
                 self.recorder.write(t, row, self.pending_mark)
             self.pending_mark = None
         if self.buf.n:
             self._capture_tick(float(self.buf.times[-1]))
+        if self.alerts_on:
+            active = self.alerter.active()
+            self.alert_banner.setText("⚠  " + "   ·   ".join(active))
+            self.alert_banner.setVisible(bool(active))
 
         rec = f"  |  REC {self.recorder.rows} rows" if self.recorder else ""
         if self.buf.n and (self.capture_armed or self.capturer.pending):

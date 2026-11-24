@@ -76,7 +76,8 @@ class LiveSession {
       const { fn, resolve, reject } = this.jobs.shift();
       const request = (payload, timeout) => {
         const p = new Uint8Array(payload);
-        return p.length ? op.request(p, timeout * 1000) : op.recv(timeout * 1000);
+        // undefined (not null) so Python sees None when the ECU doesn't answer
+        return (p.length ? op.request(p, timeout * 1000) : op.recv(timeout * 1000)).then((r) => r ?? undefined);
       };
       try { resolve(await fn(request)); } catch (e) { reject(e); }
     }

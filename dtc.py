@@ -305,6 +305,105 @@ def format_status(st: ObdStatus) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- readiness: how to complete monitors
+# General guidance, not Subaru's exact drive cycles (those are in the service manual).
+MONITOR_HINTS = {
+    "Misfire": "Runs continuously whenever the engine runs.",
+    "Fuel system": "Runs continuously whenever the engine runs.",
+    "Components": "Runs continuously whenever the engine runs.",
+    "Catalyst": "Once fully warm, cruise steadily at 70-90 km/h for 5-10 minutes, then decelerate "
+                "gently without braking hard. May need a few drives.",
+    "Heated catalyst": "Runs during warm-up after a cold start.",
+    "EVAP system": "Usually the slowest. Needs a cold start after the car has sat for 8+ hours "
+                   "(overnight), fuel between 1/4 and 3/4, then idle and gentle driving. Can take "
+                   "several days of normal use.",
+    "Secondary air": "Runs during the first minute or two after a cold start.",
+    "A/C refrigerant": "Not used on most cars.",
+    "O2 / A/F sensors": "Several minutes of steady cruise once warm, plus a few long decelerations "
+                        "with your foot fully off the pedal (fuel cut).",
+    "O2 / A/F sensor heaters": "Usually completes within a few minutes of a cold start.",
+    "EGR / VVT": "Steady cruise with some gentle accelerations and decelerations once warm.",
+}
+
+
+# ---------------------------------------------------------------- mode 09 vehicle information
+IUPR_NAMES = ["Catalyst bank 1", "Catalyst bank 2", "O2 sensor bank 1", "O2 sensor bank 2",
+              "EGR / VVT", "Secondary air", "EVAP", "Rear O2 sensor bank 1", "Rear O2 sensor bank 2"]
+
+
+@dataclass
+class VehicleInfo:
+    vin: str = ""
+    calibration_ids: list[str] | None = None
+    cvns: list[str] | None = None
+    ecu_name: str = ""
+    # In-use performance: (monitor, times completed, times conditions were met)
+    iupr: list[tuple[str, int, int]] | None = None
+    obd_conditions: int | None = None       # drives that met the general OBD conditions
+    ignition_cycles: int | None = None
+    error: str = ""
+
+
+def _info(request, infotype: int) -> bytes | None:
+    """Data of a mode 09 reply, after 49 <type> <number of data items>."""
+    reply = exchange(request, bytes([0x09, infotype]), timeout=1.0)
+    if reply and len(reply) >= 3 and reply[0] == 0x49 and reply[1] == infotype:
+        return reply[3:]
+    return None
+
+
+def _ascii(b: bytes) -> str:
+    return b.replace(b"\x00", b"").decode("ascii", "replace").strip()
+
+
+def read_vehicle_info(request: Callable[[bytes, float], bytes | None]) -> VehicleInfo:
+    vi = VehicleInfo()
+    reply = exchange(request, b"\x09\x00", timeout=1.0)
+    if not reply or reply[0] != 0x49 or len(reply) < 6:
+        reason = _nrc(reply) if reply and reply[0] == NRC else "no reply"
+        vi.error = f"not supported by this ECU ({reason})"
+        return vi
+    bits = int.from_bytes(reply[2:6], "big")
+    supported = {1 + i for i in range(32) if bits & (1 << (31 - i))}
+    if 0x02 in supported and (d := _info(request, 0x02)):
+        vi.vin = _ascii(d)
+    if 0x04 in supported and (d := _info(request, 0x04)):
+        vi.calibration_ids = [_ascii(d[i:i + 16]) for i in range(0, len(d) - 15, 16)]
+    if 0x06 in supported and (d := _info(request, 0x06)):
+        vi.cvns = [d[i:i + 4].hex().upper() for i in range(0, len(d) - 3, 4)]
+    if 0x0A in supported and (d := _info(request, 0x0A)):
+        vi.ecu_name = _ascii(d).replace("\x00", "")
+    if 0x08 in supported and (d := _info(request, 0x08)) and len(d) >= 4:
+        counts = [int.from_bytes(d[i:i + 2], "big") for i in range(0, len(d) - 1, 2)]
+        vi.obd_conditions, vi.ignition_cycles = counts[0], counts[1]
+        pairs = counts[2:]
+        vi.iupr = [(IUPR_NAMES[k], pairs[2 * k], pairs[2 * k + 1])
+                   for k in range(min(len(IUPR_NAMES), len(pairs) // 2))
+                   if pairs[2 * k] or pairs[2 * k + 1]]
+    return vi
+
+
+def format_vehicle_info(vi: VehicleInfo, include_vin: bool = True) -> str:
+    if vi.error:
+        return f"Vehicle information: ({vi.error})"
+    lines = ["Vehicle information (mode 09):"]
+    if vi.vin:
+        lines.append(f"  VIN: {vi.vin if include_vin else '(hidden)'}")
+    if vi.ecu_name:
+        lines.append(f"  ECU: {vi.ecu_name}")
+    for i, c in enumerate(vi.calibration_ids or []):
+        cvn = f"  (CVN {vi.cvns[i]})" if vi.cvns and i < len(vi.cvns) else ""
+        lines.append(f"  Calibration ID: {c}{cvn}")
+    if vi.iupr:
+        lines.append(f"\n  How often each monitor gets to run ({vi.obd_conditions} qualifying drives, "
+                     f"{vi.ignition_cycles} ignition cycles):")
+        lines.append(f"    {'Monitor':24s} {'completed':>9s} {'chances':>8s}  ratio")
+        for name, comp, cond in vi.iupr:
+            ratio = f"{comp / cond:.2f}" if cond else "-"
+            lines.append(f"    {name:24s} {comp:9d} {cond:8d}  {ratio}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- mode 06 on-board test results
 # The measured value and pass/fail limits of each self-test the ECU has run (SAE J1979, CAN
 # format). A value near a limit is an early warning, before the test fails and sets a code.

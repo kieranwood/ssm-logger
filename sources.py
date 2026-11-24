@@ -169,6 +169,26 @@ DEMO_MODE06 = {
     }
 
 
+# Simulated mode 09 vehicle information: InfoType -> data after "49 <type>" (fake VIN).
+DEMO_MODE09 = {
+    0x02: "0144454d4f3056494e303030303030303030",
+    0x04: "01413257433531304e0000000000000000",
+    0x06: "011a2b3c4d",
+    0x08: "10007801900028006e000000000034006e00000000001e006400000000000c005f",
+    0x0A: "0145434d002d456e67696e65436f6e74726f6c00",
+}
+
+
+def demo_mode09(infotype: int) -> bytes | None:
+    if infotype == 0x00:
+        bits = 0
+        for k in DEMO_MODE09:
+            bits |= 1 << (32 - k)
+        return bytes([0x49, 0x00]) + bits.to_bytes(4, "big")
+    data = DEMO_MODE09.get(infotype)
+    return bytes([0x49, infotype]) + bytes.fromhex(data) if data else None
+
+
 def demo_mode06(mid: int) -> bytes | None:
     if mid % 0x20 == 0:                              # supported-MID bitmap
         bits = 0
@@ -239,6 +259,8 @@ class DemoSource(Source):
             if pid in demo:
                 return bytes([0x41, pid]) + demo[pid]
             return None
+        if mode == 0x09 and len(payload) == 2:
+            return demo_mode09(payload[1])
         if mode == 0x06 and len(payload) == 2:
             return demo_mode06(payload[1])
         if mode in self._demo_codes:

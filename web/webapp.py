@@ -20,11 +20,21 @@ def _clean(v):
     return None if isinstance(v, float) and not math.isfinite(v) else v
 
 
-def _findings(t: np.ndarray, series: dict[str, np.ndarray]) -> list[dict]:
+def _finding_dicts(findings) -> list[dict]:
     return [{"level": f.level, "title": f.title, "detail": f.detail,
              "times": [[_clean(float(a)), _clean(float(b))] for a, b in f.times],
              "when": analyse._fmt_ranges(f.times, limit=12) if f.times else ""}
-            for f in analyse.analyse(t, series)]
+            for f in findings]
+
+
+def _findings(t: np.ndarray, series: dict[str, np.ndarray]) -> list[dict]:
+    return _finding_dicts(analyse.analyse(t, series))
+
+
+def _arrays(t_bytes, y_bytes, names: list[str]):
+    t = np.frombuffer(bytes(t_bytes.to_py()), dtype="<f8")
+    y = np.frombuffer(bytes(y_bytes.to_py()), dtype="<f8").reshape(len(names), len(t))
+    return t, {n: y[i] for i, n in enumerate(names)}
 
 
 # ------------------------------------------------------------------ saved recordings
@@ -95,12 +105,17 @@ def decode(data_js) -> list[float]:
 
 # ------------------------------------------------------------------ live: fault codes
 
+def _is_null(v) -> bool:
+    """JavaScript null/undefined arrive as None or (newer Pyodide) as a JsNull object."""
+    return v is None or type(v).__name__ in ("JsNull", "JsUndefined")
+
+
 def _bridge(js_request):
     from pyodide.ffi import run_sync, to_js
 
     def request(payload: bytes, timeout: float) -> bytes | None:
         reply = run_sync(js_request(to_js(payload), timeout))
-        return None if reply is None else bytes(reply.to_py())
+        return None if _is_null(reply) else bytes(reply.to_py())
     return request
 
 
@@ -112,6 +127,7 @@ def read_codes(js_request) -> str:
         dtc.format_freeze_frame(dtc.read_freeze_frame(request)),
         dtc.format_status(dtc.read_status(request)),
         dtc.format_test_results(dtc.read_test_results(request)),
+        dtc.format_vehicle_info(dtc.read_vehicle_info(request)),
     ])
 
 
@@ -186,3 +202,70 @@ def capture_csv_text(labels_json: str, ecu_id: str, t_bytes, y_bytes, t_trigger:
     y = np.frombuffer(bytes(y_bytes.to_py()), dtype="<f8").reshape(len(labels), len(t))
     cols = [[None if v != v else float(v) for v in row] for row in y]
     return capture.capture_csv(labels, ecu_id, t.tolist(), cols, t_trigger, reason, _capturer.settings, when)
+
+
+
+# ------------------------------------------------------------------ readiness tracker
+
+def read_readiness(js_request) -> str:
+    import dtc
+    st = dtc.read_status(_bridge(js_request))
+    return json.dumps({
+        "summary": dtc.status_summary(st),
+        "monitors": [{"name": m.name, "since": m.since_clear, "drive": m.this_drive,
+                      "hint": dtc.MONITOR_HINTS.get(m.name, "") if m.since_clear == "NOT complete" else ""}
+                     for m in st.monitors or []],
+        "errors": st.errors or [],
+    })
+
+
+# ------------------------------------------------------------------ guided tests
+
+def guided_list() -> str:
+    import guided
+    return json.dumps([{"key": g.key, "name": g.name, "purpose": g.purpose, "steps": g.steps, "needs": g.needs}
+                       for g in guided.TESTS])
+
+
+def guided_run(key: str, t_bytes, y_bytes, names_json: str, marks_json: str) -> str:
+    import guided
+    t, series = _arrays(t_bytes, y_bytes, json.loads(names_json))
+    return json.dumps(_finding_dicts(guided.run(key, t, series, json.loads(marks_json))))
+
+
+# ------------------------------------------------------------------ alerts
+
+_alerter = None
+
+
+def alert_setup(settings_json: str, names_json: str) -> str:
+    import capture
+    global _alerter
+    try:
+        st = capture.AlertSettings.from_dict(json.loads(settings_json)) if settings_json else capture.AlertSettings()
+    except (ValueError, TypeError, KeyError):
+        st = capture.AlertSettings()
+    _alerter = capture.Alerter(st, json.loads(names_json))
+    return json.dumps({"settings": st.to_dict(), "missing": _alerter.missing_channels()})
+
+
+def alert_update(t: float, row_js) -> str:
+    """Feed one sample; returns JSON [fired labels, active labels]."""
+    fired = _alerter.update(t, row_js.to_py())
+    return json.dumps([fired, _alerter.active()])
+
+
+# ------------------------------------------------------------------ report
+
+def report_html(js_request, opts_json: str, t_bytes, y_bytes) -> str:
+    """Build the shareable report. js_request is None when not reading the ECU; t/y may be None."""
+    import report
+    opts = json.loads(opts_json)
+    ecu = None if _is_null(js_request) else report.gather_ecu(_bridge(js_request))
+    kw = {}
+    if not _is_null(t_bytes):
+        t, series = _arrays(t_bytes, y_bytes, opts["names"])
+        kw = dict(t=t, series=series, units=opts.get("units"), findings=analyse.analyse(t, series))
+    return report.build(opts.get("title") or "Vehicle report", ecu_id=opts.get("ecuId", ""),
+                        source=opts.get("source", ""), ecu=ecu, include_vin=opts.get("includeVin", False),
+                        generated=opts.get("generated"), **kw)

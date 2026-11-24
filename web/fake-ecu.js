@@ -16,6 +16,15 @@ const DEMO_MODE06 = {
   0xa1: "a1 0b 24 0000 0000 ffff a1 0c 24 0000 0000 ffff",
 };
 
+// Simulated mode 09 vehicle information (same as DEMO_MODE09 in sources.py; the VIN is fake).
+const DEMO_MODE09 = {
+  0x02: "0144454d4f3056494e303030303030303030",
+  0x04: "01413257433531304e0000000000000000",
+  0x06: "011a2b3c4d",
+  0x08: "10007801900028006e000000000034006e00000000001e006400000000000c005f",
+  0x0a: "0145434d002d456e67696e65436f6e74726f6c00",
+};
+
 const hexBytes = (hex) => new Uint8Array(hex.replace(/\s+/g, "").match(/../g).map((h) => parseInt(h, 16)));
 
 class DemoEcu {
@@ -105,6 +114,11 @@ class DemoEcu {
         return new Uint8Array([0x41, pid, ...supported(pid, [...Object.keys(live).map(Number), 0x20, 0x40])]);
       }
       return live[pid] ? new Uint8Array([0x41, pid, ...live[pid]]) : null;
+    }
+    if (mode === 0x09 && req.length === 2) {
+      const type = req[1];
+      if (type === 0x00) return new Uint8Array([0x49, 0x00, ...supported(0, Object.keys(DEMO_MODE09).map(Number))]);
+      return DEMO_MODE09[type] ? new Uint8Array([0x49, type, ...hexBytes(DEMO_MODE09[type])]) : null;
     }
     if (mode === 0x06 && req.length === 2) {
       const mid = req[1];

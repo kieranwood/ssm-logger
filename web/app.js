@@ -6,7 +6,7 @@
 // Nothing is uploaded anywhere.
 "use strict";
 
-const PY_MODULES = ["recording.py", "analyse.py", "defs.py", "dtc.py", "capture.py"];
+const PY_MODULES = ["recording.py", "analyse.py", "defs.py", "dtc.py", "capture.py", "guided.py", "report.py"];
 // Deployed site: modules are copied to py/. Local dev (serving the repo root): they sit one level up.
 const PY_BASES = ["py/", "../"];
 // Deploys stamp ?v=<commit> on app.js; reuse it so every other file is refreshed together.
@@ -146,6 +146,7 @@ function showRecording(rec) {
   $("filter").disabled = false;
   $("analyse").disabled = false;
   $("reset").disabled = false;
+  $("tools").disabled = false;
   document.body.classList.toggle("live", rec.live);
 }
 
@@ -278,9 +279,21 @@ function syncX(src) {
   state.syncing = false;
 }
 
+const nulled = (arr) => Array.from(arr, (v) => (v == null || Number.isNaN(v) ? null : v));
+
+function compareSeries(i) {
+  const cmp = state.compare;
+  if (!cmp || state.rec.live) return null;
+  const y = cmp.byName.get(state.rec.channels[i].name);
+  return y ? { t: Array.from(cmp.t, (v) => v + cmp.shift), y: nulled(y) } : null;
+}
+
 function seriesData(i) {
   const rec = state.rec;
-  return [rec.t, rec.live ? rec.y[i] : Array.from(rec.y[i], (v) => (Number.isNaN(v) ? null : v))];
+  if (rec.live) return [rec.t, rec.y[i]];
+  const cmp = compareSeries(i);
+  if (!cmp) return [rec.t, nulled(rec.y[i])];
+  return uPlot.join([[Array.from(rec.t), nulled(rec.y[i])], [cmp.t, cmp.y]]);
 }
 
 function addChart(i) {
@@ -317,6 +330,7 @@ function addChart(i) {
     series: [
       {},
       { stroke: colorFor(i), width: 1.25, paths: ch.switch ? uPlot.paths.stepped({ align: 1 }) : undefined },
+      ...(compareSeries(i) ? [{ stroke: cssVar("--compare"), width: 1.1, dash: [6, 4], spanGaps: true }] : []),
     ],
     hooks: {
       draw: [drawOverlays],
@@ -359,8 +373,8 @@ function redrawAll() {
 
 // ------------------------------------------------------------------ findings
 
-function showFindings() {
-  const fs = state.rec.findings;
+function showFindings(fs = state.rec.findings, title = "Analysis") {
+  $("findings-title").textContent = title;
   const counts = {};
   for (const f of fs) counts[f.level] = (counts[f.level] || 0) + 1;
   $("counts").textContent = ["problem", "warning", "info", "ok"]
@@ -411,7 +425,7 @@ function selectFinding(li, f) {
 function analyseNow() {
   const rec = state.rec;
   if (!rec.live) {
-    showFindings();
+    showFindings(rec.findings, "Analysis");
     return;
   }
   if (rec.t.length < 10) {
@@ -431,7 +445,7 @@ function analyseNow() {
     return;
   }
   state.highlight = [];
-  showFindings();
+  showFindings(rec.findings, "Analysis");
 }
 
 // ------------------------------------------------------------------ live mode
@@ -506,6 +520,14 @@ function onLiveSample(t, row) {
   }
   rec.t.push(t);
   row.forEach((v, i) => rec.y[i].push(Number.isFinite(v) ? v : null));
+  if (state.alertsOn) {
+    const [fired, active] = JSON.parse(state.py.globals.get("alert_update")(t, row));
+    if (fired.length && state.alertSettings.sound) beep();
+    if (active.join() !== state.alertActive.join()) {
+      state.alertActive = active;
+      showAlertBanner();
+    }
+  }
   if (state.capArmed) {
     const reason = state.py.globals.get("capture_update")(t, row);
     if (reason) {
@@ -553,6 +575,7 @@ async function startLive(port, { demo }) {
       });
       setFollowing(true);
       setupCapture(channels, ecuId);
+      setupAlerts();
     },
     onSample: onLiveSample,
   });
@@ -570,6 +593,9 @@ function endLive() {
   state.capArmed = false;
   state.capPending = false;
   updateCapButton();
+  state.alertActive = [];
+  showAlertBanner();
+  stopReadinessAuto();
   state.session = null;
   document.body.classList.remove("connected");
   $("cursor-readout").textContent = "Disconnected. The charts stay open for review.";
@@ -583,6 +609,7 @@ function endLive() {
 
 async function connectCar() {
   if (!("serial" in navigator)) return;
+  unlockAudio();
   let port;
   try {
     port = await navigator.serial.requestPort();
@@ -844,6 +871,312 @@ function jspiHint(e) {
     : `Error: ${msg}`;
 }
 
+// ------------------------------------------------------------------ alerts (capture.Alerter)
+
+const ALERT_KEY = "ssm-logger.alerts";
+let audioCtx = null;
+
+function unlockAudio() {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch { /* no audio */ }
+}
+
+function beep() {
+  if (!audioCtx) return;
+  try {
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.35);
+  } catch { /* ignore */ }
+}
+
+function applyAlertSettings(json) {
+  const names = JSON.stringify(state.rec.channels.map((c) => c.name));
+  const res = JSON.parse(state.py.globals.get("alert_setup")(json, names));
+  state.alertSettings = res.settings;
+  state.alertActive = [];
+  showAlertBanner();
+  if (res.missing.length) setStatus(`Alerts: this ECU doesn't log ${res.missing.join(", ")}`);
+}
+
+function setupAlerts() {
+  let json = "";
+  try { json = localStorage.getItem(ALERT_KEY) || ""; } catch { /* private mode */ }
+  applyAlertSettings(json);
+  setAlertsOn(true);
+}
+
+function setAlertsOn(on) {
+  state.alertsOn = on;
+  $("alerts").classList.toggle("armed", on);
+  $("alerts").textContent = on ? "Alerts on" : "Alerts off";
+  if (!on) {
+    state.alertActive = [];
+    showAlertBanner();
+  } else {
+    unlockAudio();
+  }
+}
+
+function showAlertBanner() {
+  const active = state.alertActive || [];
+  $("alert-banner").hidden = !active.length;
+  $("alert-banner").textContent = active.length ? `⚠  ${active.join("   ·   ")}` : "";
+  resizeCharts();
+}
+
+function openAlertSettings() {
+  const st = state.alertSettings;
+  $("cap-channels").replaceChildren(...state.rec.channels.map((c) => Object.assign(document.createElement("option"), { value: c.name })));
+  $("alert-rules").replaceChildren(...st.rules.map(ruleRow));
+  $("alert-sound").checked = st.sound;
+  $("alert-running").checked = st.running_only;
+  $("alert-dialog").showModal();
+}
+
+function readRules(tbody) {
+  const num = (el, d) => (Number.isFinite(parseFloat(el.value)) ? parseFloat(el.value) : d);
+  return [...tbody.children].map((tr) => ({
+    channel: tr.querySelector(".ch").value.trim(),
+    op: tr.querySelector(".op").value,
+    value: num(tr.querySelector(".val"), 0),
+    hold_s: Math.max(0, num(tr.querySelector(".hold"), 0)),
+    enabled: tr.querySelector(".on").checked,
+  })).filter((r) => r.channel);
+}
+
+function saveAlertDialog() {
+  const json = JSON.stringify({ rules: readRules($("alert-rules")), sound: $("alert-sound").checked,
+                                running_only: $("alert-running").checked });
+  try { localStorage.setItem(ALERT_KEY, json); } catch { /* private mode */ }
+  applyAlertSettings(json);
+  $("alert-dialog").close();
+}
+
+// ------------------------------------------------------------------ data slices for Python
+
+function dataBytes(a = -Infinity, b = Infinity) {
+  const rec = state.rec;
+  let i0 = 0;
+  while (i0 < rec.t.length && rec.t[i0] < a) i0++;
+  let i1 = i0;
+  while (i1 < rec.t.length && rec.t[i1] <= b) i1++;
+  const n = i1 - i0;
+  const t = Float64Array.from(rec.t.slice(i0, i1));
+  const y = new Float64Array(rec.channels.length * n);
+  rec.y.forEach((col, c) => { for (let k = 0; k < n; k++) y[c * n + k] = col[i0 + k] ?? NaN; });
+  return { n, t: new Uint8Array(t.buffer), y: new Uint8Array(y.buffer),
+           names: JSON.stringify(rec.channels.map((c) => c.name)) };
+}
+
+function visibleRange() {
+  const first = [...state.charts.values()][0];
+  return first ? [first.u.scales.x.min, first.u.scales.x.max] : [-Infinity, Infinity];
+}
+
+// ------------------------------------------------------------------ guided tests (guided.py)
+
+function openGuided() {
+  if (!state.guidedTests) state.guidedTests = JSON.parse(state.py.globals.get("guided_list")());
+  const sel = $("guided-test");
+  if (!sel.options.length) {
+    for (const g of state.guidedTests) sel.add(new Option(g.name, g.key));
+  }
+  describeGuided();
+  if (!$("guided-dialog").open) $("guided-dialog").show();     // non-modal: the charts stay usable
+}
+
+function describeGuided() {
+  const g = state.guidedTests.find((x) => x.key === $("guided-test").value);
+  const d = $("guided-desc");
+  d.replaceChildren();
+  const p = document.createElement("p");
+  p.textContent = g.purpose;
+  const ol = document.createElement("ol");
+  for (const step of g.steps) ol.appendChild(Object.assign(document.createElement("li"), { textContent: step }));
+  const needs = Object.assign(document.createElement("p"), { className: "sub", textContent: `Needs: ${g.needs.join(", ")}` });
+  d.append(p, ol, needs);
+}
+
+function guidedStart() {
+  if (!state.rec?.live || !state.rec.t.length) return;
+  state.guidedStart = latestT();
+  $("guided-test").disabled = true;
+  $("guided-start").textContent = "Restart";
+  $("guided-finish").disabled = false;
+  clearInterval(state.guidedTimer);
+  state.guidedTimer = setInterval(() => {
+    $("guided-elapsed").textContent = `running for ${Math.round(latestT() - state.guidedStart)} s`;
+  }, 500);
+}
+
+function guidedFinish() {
+  clearInterval(state.guidedTimer);
+  $("guided-test").disabled = false;
+  $("guided-start").textContent = "Start";
+  $("guided-finish").disabled = true;
+  runGuided(state.guidedStart, latestT());
+}
+
+function runGuided(a, b) {
+  const key = $("guided-test").value;
+  const d = dataBytes(a, b);
+  const marks = state.rec.marks.map(([t]) => t).filter((t) => t >= a && t <= b);
+  const fs = JSON.parse(state.py.globals.get("guided_run")(key, d.t, d.y, d.names, JSON.stringify(marks)));
+  $("guided-elapsed").textContent = `checked ${Math.round(b - a)} s of data`;
+  const name = state.guidedTests.find((x) => x.key === key).name;
+  state.highlight = [];
+  showFindings(fs, `Guided test: ${name}`);
+  redrawAll();
+}
+
+// ------------------------------------------------------------------ readiness tracker
+
+function openReadiness() {
+  $("readiness-dialog").show();
+  checkReadiness();
+}
+
+async function checkReadiness() {
+  if (!state.session?.op) {
+    $("readiness-msg").textContent = "Not connected to the ECU right now.";
+    return;
+  }
+  if (state.readinessBusy) return;
+  state.readinessBusy = true;
+  $("readiness-msg").textContent = "Checking…";
+  try {
+    const r = JSON.parse(await state.session.runJob((req) => state.py.globals.get("read_readiness").callPromising(req)));
+    $("readiness-summary").replaceChildren(...r.summary.map(([a, b]) => {
+      const tr = document.createElement("tr");
+      tr.append(Object.assign(document.createElement("td"), { textContent: a }),
+                Object.assign(document.createElement("td"), { textContent: b }));
+      return tr;
+    }));
+    const prev = state.readinessPrev || {};
+    const newly = [];
+    $("readiness-rows").replaceChildren(...r.monitors.map((m) => {
+      const tr = document.createElement("tr");
+      const done = prev[m.name] === "NOT complete" && m.since === "complete";
+      if (done) newly.push(m.name);
+      const cells = [[m.name, ""], [m.since, done ? "done" : m.since === "NOT complete" ? "warn" : ""],
+                     [m.drive, m.drive === "NOT complete" ? "warn" : ""], [m.hint, "hint"]];
+      for (const [text, cls] of cells) tr.appendChild(Object.assign(document.createElement("td"), { textContent: text, className: cls }));
+      return tr;
+    }));
+    state.readinessPrev = Object.fromEntries(r.monitors.map((m) => [m.name, m.since]));
+    const time = new Date().toLocaleTimeString();
+    $("readiness-msg").textContent = (newly.length ? `Completed: ${newly.join(", ")}. ` : "") +
+      `Checked at ${time}.` + (r.errors.length ? ` (${r.errors.join("; ")})` : "");
+  } catch (e) {
+    $("readiness-msg").textContent = jspiHint(e);
+  } finally {
+    state.readinessBusy = false;
+  }
+}
+
+function stopReadinessAuto() {
+  clearInterval(state.readinessTimer);
+  state.readinessTimer = null;
+  $("readiness-auto").checked = false;
+}
+
+// ------------------------------------------------------------------ compare
+
+async function openCompare(file) {
+  if (!file) return;
+  if (state.rec?.live) {
+    setStatus("Compare works on saved recordings - disconnect first, or compare in the desktop app.", true);
+    return;
+  }
+  const py = await state.pyReady;
+  py.FS.writeFile("/tmp/compare.csv", await file.text());
+  let res;
+  try {
+    res = py.globals.get("load")("/tmp/compare.csv");
+  } catch (e) {
+    setStatus(`Could not open ${file.name}: ${pyError(e)}`, true);
+    return;
+  }
+  const [metaJson, tBytes, yBytes] = res.toJs();
+  res.destroy();
+  const meta = JSON.parse(metaJson);
+  const t = bytesToF64(tBytes), flat = bytesToF64(yBytes), n = t.length;
+  const byName = new Map(meta.channels.map((c, i) => [c.name, flat.subarray(i * n, (i + 1) * n)]));
+  const shift = Math.round((state.rec.t[0] - t[0]) * 10) / 10;
+  state.compare = { name: file.name, t, byName, shift };
+  $("compare-name").textContent = `Comparing: ${file.name} (dashed)`;
+  $("compare-shift").value = shift;
+  $("compare-bar").hidden = false;
+  rebuildCharts();
+}
+
+function closeCompare() {
+  state.compare = null;
+  $("compare-bar").hidden = true;
+  rebuildCharts();
+}
+
+function rebuildCharts() {
+  const [min, max] = visibleRange();
+  for (const c of state.charts.values()) { c.u.destroy(); c.el.remove(); }
+  state.charts.clear();
+  state.selected.forEach(addChart);
+  if (Number.isFinite(min)) zoomTo(min, max);
+}
+
+// ------------------------------------------------------------------ report (report.py)
+
+function openReport() {
+  const live = !!state.session?.op;
+  $("report-ecu").checked = live;
+  $("report-ecu").disabled = !live;
+  $("report-data").disabled = !state.rec?.t.length;
+  $("report-msg").textContent = live ? "" : "ECU readings are only available while connected to the car.";
+  $("report-create").disabled = false;
+  $("report-dialog").showModal();
+}
+
+async function createReport() {
+  $("report-create").disabled = true;
+  const rec = state.rec;
+  const withData = $("report-data").checked && rec?.t.length;
+  const d = withData ? dataBytes() : null;
+  const now = new Date(), p = (x) => String(x).padStart(2, "0");
+  const opts = JSON.stringify({
+    title: $("report-title").value.trim(), includeVin: $("report-vin").checked,
+    names: rec ? rec.channels.map((c) => c.name) : [],
+    units: rec ? Object.fromEntries(rec.channels.map((c) => [c.name, c.units])) : {},
+    ecuId: state.session?.ecuId || (rec?.info.match(/ECU (\w+)/) || [])[1] || "",
+    source: rec?.live ? "live session" : rec?.name || "",
+    generated: `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ${p(now.getHours())}:${p(now.getMinutes())}`,
+  });
+  const build = state.py.globals.get("report_html");
+  let page;
+  try {
+    if ($("report-ecu").checked) {
+      $("report-msg").textContent = "Reading the ECU…";
+      page = await state.session.runJob((req) => build.callPromising(req, opts, d?.t, d?.y));
+    } else {
+      page = build(undefined, opts, d?.t, d?.y);
+    }
+  } catch (e) {
+    $("report-msg").textContent = jspiHint(e);
+    $("report-create").disabled = false;
+    return;
+  }
+  const name = `report_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}_${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}.html`;
+  download(new Blob([page], { type: "text/html" }), name);
+  setStatus(`Saved ${name} to your downloads - open it to view, share or print`);
+  $("report-dialog").close();
+}
+
 // ------------------------------------------------------------------ wiring
 
 function resizeCharts() {
@@ -898,8 +1231,48 @@ $("codes-clear-cancel").addEventListener("click", () => { $("codes-confirm").hid
 $("codes-clear-yes").addEventListener("click", clearCodes);
 $("codes-close").addEventListener("click", () => $("codes-dialog").close());
 $("autocap").addEventListener("click", () => setArmed(!state.capArmed));
+$("alerts").addEventListener("click", () => setAlertsOn(!state.alertsOn));
+$("alert-add").addEventListener("click", () => $("alert-rules").appendChild(ruleRow({ channel: "", op: ">", value: 0, hold_s: 2, enabled: true })));
+$("alert-cancel").addEventListener("click", () => $("alert-dialog").close());
+$("alert-save").addEventListener("click", saveAlertDialog);
+$("tools").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const m = $("tools-menu");
+  m.hidden = !m.hidden;
+  $("tools").setAttribute("aria-expanded", String(!m.hidden));
+});
+document.addEventListener("click", () => { $("tools-menu").hidden = true; $("tools").setAttribute("aria-expanded", "false"); });
+$("tools-menu").addEventListener("click", (e) => {
+  const act = e.target.closest("button")?.dataset.act;
+  $("tools-menu").hidden = true;
+  if (act === "guided") openGuided();
+  else if (act === "compare") $("compare-file").click();
+  else if (act === "report") openReport();
+  else if (act === "readiness") openReadiness();
+  else if (act === "capset") openCapSettings();
+  else if (act === "alertset") openAlertSettings();
+});
+$("compare-file").addEventListener("change", (e) => { openCompare(e.target.files[0]); e.target.value = ""; });
+$("compare-close").addEventListener("click", closeCompare);
+$("compare-shift").addEventListener("change", (e) => {
+  if (!state.compare) return;
+  state.compare.shift = parseFloat(e.target.value) || 0;
+  rebuildCharts();
+});
+$("guided-test").addEventListener("change", describeGuided);
+$("guided-start").addEventListener("click", guidedStart);
+$("guided-finish").addEventListener("click", guidedFinish);
+$("guided-visible").addEventListener("click", () => runGuided(...visibleRange()));
+$("guided-close").addEventListener("click", () => $("guided-dialog").close());
+$("readiness-check").addEventListener("click", checkReadiness);
+$("readiness-close").addEventListener("click", () => { stopReadinessAuto(); $("readiness-dialog").close(); });
+$("readiness-auto").addEventListener("change", (e) => {
+  clearInterval(state.readinessTimer);
+  state.readinessTimer = e.target.checked ? setInterval(checkReadiness, 30_000) : null;
+});
+$("report-cancel").addEventListener("click", () => $("report-dialog").close());
+$("report-create").addEventListener("click", createReport);
 $("capnow").addEventListener("click", captureNow);
-$("capset").addEventListener("click", openCapSettings);
 $("cap-add").addEventListener("click", () => $("cap-rules").appendChild(ruleRow({ channel: "", op: ">", value: 0, hold_s: 2, enabled: true })));
 $("cap-cancel").addEventListener("click", () => $("cap-dialog").close());
 $("cap-save").addEventListener("click", saveCapDialog);

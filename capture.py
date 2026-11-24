@@ -11,6 +11,8 @@ Triggers:
   - a new stored or pending fault code (the caller polls the ECU and calls codes()).
   - a manual "capture now".
 
+Also: threshold alerts while logging (Alerter), which use the same rules.
+
 Used by logger.py (desktop) and web/webapp.py (browser).
 """
 
@@ -68,24 +70,27 @@ class Settings:
         return cls(**d)
 
 
-class Capturer:
-    def __init__(self, settings: Settings, channel_names: list[str]):
-        self.settings = settings
+class RuleWatcher:
+    """Evaluates rules sample by sample. A rule *fires* once when its condition has held for
+    hold_s, and is *active* from then until the condition clears."""
+
+    def __init__(self, rules: list[Rule], channel_names: list[str], running_only: bool = True):
+        self.rules = rules
         self.col = {n: i for i, n in enumerate(channel_names)}
         self.rpm_col = self.col.get("Engine Speed")
+        self.running_only = running_only
         self.since: dict[int, float] = {}     # rule index -> when its condition started holding
         self.latched: set[int] = set()        # rules that fired and haven't cleared yet
-        self.pending: tuple[float, str] | None = None
-        self.known_codes: set[str] | None = None
-        self.saved = 0
 
     def missing_channels(self) -> list[str]:
-        return sorted({r.channel for r in self.settings.rules if r.enabled and r.channel not in self.col})
+        return sorted({r.channel for r in self.rules if r.enabled and r.channel not in self.col})
 
-    def update(self, t: float, row: list[float]) -> None:
-        running = (self.rpm_col is None or not self.settings.running_only
+    def update(self, t: float, row: list[float]) -> list[Rule]:
+        """Feed one sample; returns the rules that fired on it."""
+        running = (self.rpm_col is None or not self.running_only
                    or (row[self.rpm_col] or 0) > RUNNING_RPM)
-        for i, rule in enumerate(self.settings.rules):
+        fired = []
+        for i, rule in enumerate(self.rules):
             c = self.col.get(rule.channel)
             if not rule.enabled or c is None:
                 continue
@@ -97,7 +102,27 @@ class Capturer:
             start = self.since.setdefault(i, t)
             if i not in self.latched and t - start >= rule.hold_s:
                 self.latched.add(i)
-                self.trigger(t, rule.label())
+                fired.append(rule)
+        return fired
+
+    def active(self) -> list[Rule]:
+        return [self.rules[i] for i in sorted(self.latched)]
+
+
+class Capturer:
+    def __init__(self, settings: Settings, channel_names: list[str]):
+        self.settings = settings
+        self.watch = RuleWatcher(settings.rules, channel_names, settings.running_only)
+        self.pending: tuple[float, str] | None = None
+        self.known_codes: set[str] | None = None
+        self.saved = 0
+
+    def missing_channels(self) -> list[str]:
+        return self.watch.missing_channels()
+
+    def update(self, t: float, row: list[float]) -> None:
+        for rule in self.watch.update(t, row):
+            self.trigger(t, rule.label())
 
     def codes(self, t: float, codes: set[str]) -> None:
         """Report the stored + pending codes read from the ECU."""
@@ -129,6 +154,49 @@ class Capturer:
             left = self.pending[0] + self.settings.after_s - t_now
             return f"capturing ({self.pending[1]}) - saving in {max(0, left):.0f} s"
         return "armed" + (f", {self.saved} saved" if self.saved else "")
+
+
+# ---------------------------------------------------------------- alerts
+def default_alert_rules() -> list[Rule]:
+    return [
+        Rule("Coolant Temperature", ">", 105, 3),
+        Rule("Battery Voltage", "<", 12.5, 5),
+        Rule("Total Fuel Trim", ">", 30, 5, enabled=False),
+        Rule("Engine Speed", ">", 6000, 0, enabled=False),
+    ]
+
+
+@dataclass
+class AlertSettings:
+    rules: list[Rule] = field(default_factory=default_alert_rules)
+    sound: bool = True
+    running_only: bool = True     # ignore rules unless the engine is running
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AlertSettings":
+        d = dict(d)
+        d["rules"] = [Rule(**r) for r in d.get("rules", [])]
+        return cls(**d)
+
+
+class Alerter:
+    """Threshold alerts while logging: fired() for a sound, active() for the banner."""
+
+    def __init__(self, settings: AlertSettings, channel_names: list[str]):
+        self.settings = settings
+        self.watch = RuleWatcher(settings.rules, channel_names, settings.running_only)
+
+    def update(self, t: float, row: list[float]) -> list[str]:
+        return [r.label() for r in self.watch.update(t, row)]
+
+    def active(self) -> list[str]:
+        return [r.label() for r in self.watch.active()]
+
+    def missing_channels(self) -> list[str]:
+        return self.watch.missing_channels()
 
 
 def _g4(v: float) -> str:

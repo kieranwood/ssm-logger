@@ -20,7 +20,6 @@
     <button id="record" class="btn primary" title="Record to a CSV that downloads when you stop">Record</button>
     <button id="mark" class="btn" title="Drop a numbered marker (M)">Mark</button>
     <button id="autocap" class="btn" title="Save the data around a fault automatically">Auto-capture</button>
-    <button id="capset" class="btn" title="Auto-capture triggers and window" aria-label="Auto-capture settings">⚙</button>
     <button id="capnow" class="btn" title="Save the last seconds and the next few now (C)">Capture now</button>
     <button id="pause" class="btn">Pause</button>
     <label class="window">Window
@@ -33,11 +32,28 @@
         <option value="0">All</option>
       </select>
     </label>
+    <button id="alerts" class="btn armed" title="Warn when a value crosses a limit (rules under Tools)">Alerts on</button>
     <button id="codes" class="btn">Fault codes…</button>
     <button id="disconnect" class="btn">Disconnect</button>
   </span>
   <button id="analyse" class="btn" disabled>Analyse</button>
   <button id="reset" class="btn" disabled>Reset zoom</button>
+  <span class="menu-wrap">
+    <button id="tools" class="btn" aria-haspopup="true" aria-expanded="false" disabled>Tools ▾</button>
+    <div id="tools-menu" class="menu" hidden>
+      <button data-act="guided">Guided tests…</button>
+      <button data-act="compare" class="rec-item">Compare with another recording…</button>
+      <button data-act="report">Report…</button>
+      <button data-act="readiness" class="live-item">Readiness tracker…</button>
+      <button data-act="capset" class="live-item">Auto-capture settings…</button>
+      <button data-act="alertset" class="live-item">Alert settings…</button>
+    </div>
+  </span>
+  <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
+  <span id="compare-bar" hidden>
+    <i id="compare-name"></i> shift <input id="compare-shift" type="number" step="0.5" value="0"> s
+    <button id="compare-close" class="btn small" aria-label="Stop comparing">✕</button>
+  </span>
   <span id="info" class="info"></span>
   <span id="status" class="status">Loading Python…</span>
 </header>
@@ -48,6 +64,8 @@
     <div id="channels"></div>
   </aside>
 
+  <div id="chart-col">
+  <div id="alert-banner" hidden></div>
   <section id="charts">
     <div id="empty" class="empty">
       <h1>SSM Log Viewer</h1>
@@ -66,10 +84,11 @@
         checks. Everything runs in your browser - nothing is uploaded.</p>
     </div>
   </section>
+  </div>
 
   <aside id="findings" hidden>
     <div class="findings-head">
-      <b>Analysis</b>
+      <b id="findings-title">Analysis</b>
       <span id="counts"></span>
       <button id="close-findings" class="btn small" aria-label="Close analysis">✕</button>
     </div>
@@ -120,6 +139,73 @@
     <span class="spacer"></span>
     <button id="cap-cancel" class="btn">Cancel</button>
     <button id="cap-save" class="btn primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="alert-dialog">
+  <div class="dialog-head"><b>Alerts</b></div>
+  <p class="sub">While alerts are on, a red banner shows any rule that is currently true (after its hold
+    time), with a beep when it starts.</p>
+  <table class="rules">
+    <thead><tr><th>On</th><th>Channel</th><th></th><th>Value</th><th>Hold (s)</th><th></th></tr></thead>
+    <tbody id="alert-rules"></tbody>
+  </table>
+  <p><button id="alert-add" class="btn small">Add rule</button></p>
+  <p><label><input type="checkbox" id="alert-sound"> Beep when an alert starts</label></p>
+  <p><label><input type="checkbox" id="alert-running"> Ignore rules while the engine is off (below 400 rpm)</label></p>
+  <div class="dialog-buttons">
+    <span class="spacer"></span>
+    <button id="alert-cancel" class="btn">Cancel</button>
+    <button id="alert-save" class="btn primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="guided-dialog">
+  <div class="dialog-head"><b>Guided tests</b></div>
+  <p><select id="guided-test"></select></p>
+  <div id="guided-desc"></div>
+  <div class="dialog-buttons">
+    <button id="guided-start" class="btn primary live-item">Start</button>
+    <button id="guided-finish" class="btn live-item" disabled>Finish and check</button>
+    <button id="guided-visible" class="btn rec-item">Check the visible part of the recording</button>
+    <span id="guided-elapsed" class="sub"></span>
+    <span class="spacer"></span>
+    <button id="guided-close" class="btn">Close</button>
+  </div>
+  <p class="sub">Results appear in the panel on the right; click one to zoom the charts to it.</p>
+</dialog>
+
+<dialog id="readiness-dialog">
+  <div class="dialog-head"><b>Readiness tracker</b></div>
+  <table class="kv" id="readiness-summary"></table>
+  <table class="grid">
+    <thead><tr><th>Monitor</th><th>Since cleared</th><th>This drive</th><th>How to complete</th></tr></thead>
+    <tbody id="readiness-rows"></tbody>
+  </table>
+  <p><label><input type="checkbox" id="readiness-auto"> Recheck every 30 s while this is open - watch
+    monitors complete as you drive</label></p>
+  <p id="readiness-msg" class="sub"></p>
+  <div class="dialog-buttons">
+    <button id="readiness-check" class="btn">Check now</button>
+    <span class="spacer"></span>
+    <button id="readiness-close" class="btn">Close</button>
+  </div>
+</dialog>
+
+<dialog id="report-dialog">
+  <div class="dialog-head"><b>Report</b></div>
+  <p class="sub">One HTML page to share or print (open it and print to PDF if you need one).</p>
+  <p><label>Title <input id="report-title" type="text" value="Vehicle report"></label></p>
+  <p><label><input type="checkbox" id="report-ecu"> Fault codes, freeze frame, monitors, test results and
+    vehicle info from the ECU</label></p>
+  <p><label><input type="checkbox" id="report-vin"> Include the VIN (left out by default since reports are
+    usually shared)</label></p>
+  <p><label><input type="checkbox" id="report-data" checked> Analysis and charts of the logged data</label></p>
+  <p id="report-msg" class="sub"></p>
+  <div class="dialog-buttons">
+    <span class="spacer"></span>
+    <button id="report-cancel" class="btn">Cancel</button>
+    <button id="report-create" class="btn primary">Create report</button>
   </div>
 </dialog>
 
