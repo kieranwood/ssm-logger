@@ -429,11 +429,19 @@ state.pyReady = startPython().catch((e) => {
   throw e;
 });
 
-// ?url=path/to/log.csv opens a recording straight away (same-origin or CORS-enabled URLs).
-const startUrl = new URLSearchParams(location.search).get("url");
-if (startUrl) {
-  fetch(startUrl)
+function openUrl(url) {
+  setStatus("Downloading…");
+  return fetch(url)
     .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); })
-    .then((text) => openText(startUrl.split("/").pop(), text))
-    .catch((e) => setStatus(`Could not load ${startUrl}: ${e.message}`, true));
+    .then((text) => openText(url.split("/").pop(), text))
+    .catch((e) => setStatus(`Could not load ${url}: ${e.message}`, true));
 }
+
+const SAMPLE_URL = "samples/p0171-failing-af-sensor.csv";
+$("sample").addEventListener("click", () => openUrl(SAMPLE_URL));
+
+// ?url=path/to/log.csv opens a recording straight away (same-origin or CORS-enabled URLs);
+// ?sample opens the bundled sample.
+const params = new URLSearchParams(location.search);
+const startUrl = params.get("url") || (params.has("sample") ? SAMPLE_URL : null);
+if (startUrl) openUrl(startUrl);

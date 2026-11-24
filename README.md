@@ -32,6 +32,9 @@ OpenPort's SD card to chart it and run the same analysis. It runs this repo's ow
 never uploaded. The first visit downloads about 10 MB (Python and numpy), which the browser then
 caches. It can't connect to the car yet.
 
+[Open it with a sample recording](https://kieranwood.github.io/ssm-logger/?sample) - the failing
+front A/F sensor log shown in the screenshot above.
+
 To run it locally, serve the repo root and open `/web/`:
 
 ```sh
