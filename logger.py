@@ -925,8 +925,15 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true", help="simulated data, no car needed")
     ap.add_argument("--open", metavar="CSV", help="review a saved log instead of connecting")
     ap.add_argument("--port", help="serial port (default: first /dev/cu.usbmodem*)")
-    ap.add_argument("--defs", default=str(defs.DEFAULT_DEFS), help="path to RomRaider log_defs.xml")
+    ap.add_argument("--defs", help="path to RomRaider log_defs.xml (default: the copy from fetch_defs.py)")
     args = ap.parse_args()
+
+    if not args.open:
+        try:
+            defs.find_defs() if not args.defs else None
+        except defs.DefinitionsMissing as e:
+            print(e, file=sys.stderr)
+            return 1
 
     app = QtWidgets.QApplication(sys.argv)
     pg.setConfigOptions(antialias=True)

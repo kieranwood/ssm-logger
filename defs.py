@@ -1,5 +1,8 @@
 """Standard SSM parameter definitions, loaded from RomRaider's log_defs.xml.
 
+The file is not part of this repo (RomRaider is GPL). Get it with:
+    .venv/bin/python fetch_defs.py
+
 Only the "SSM base" set is used: fixed addresses every Subaru ECU of this era
 answers on. Whether a particular ECU supports a parameter is given by a bit in
 its init reply: RomRaider's byte="N" bit="M" means init[N + 7] & (1 << (M - 1)),
@@ -8,12 +11,31 @@ where init is the reply data after the 0xEA response byte.
 
 from __future__ import annotations
 
+import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_DEFS = Path.home() / "source/RomRaider/definitions/log_defs.xml"
+# Searched in order; SSM_LOG_DEFS (environment variable) overrides all of them.
+DOWNLOADED_DEFS = Path(__file__).resolve().parent / "definitions" / "log_defs.xml"   # fetch_defs.py
+ROMRAIDER_CHECKOUT_DEFS = Path.home() / "source/RomRaider/definitions/log_defs.xml"
+
+
+class DefinitionsMissing(FileNotFoundError):
+    pass
+
+
+def find_defs() -> Path:
+    if env := os.environ.get("SSM_LOG_DEFS"):
+        return Path(env).expanduser()
+    for path in (DOWNLOADED_DEFS, ROMRAIDER_CHECKOUT_DEFS):
+        if path.is_file():
+            return path
+    raise DefinitionsMissing(
+        "RomRaider's log_defs.xml was not found. Download it with:\n"
+        "    .venv/bin/python fetch_defs.py\n"
+        "or point the SSM_LOG_DEFS environment variable at your own copy.")
 
 _SAFE_EXPR = re.compile(r"^[\d\s.+\-*/()x]+$")
 
@@ -61,7 +83,8 @@ class Parameter:
         return f"{self.name} ({self.units})" if self.units else self.name
 
 
-def load(path: Path | str = DEFAULT_DEFS) -> list[Parameter]:
+def load(path: Path | str | None = None) -> list[Parameter]:
+    path = path or find_defs()
     root = ET.parse(path).getroot()
     base = root.find(".//logprotocol[@type='SSM']/ecu[@type='ssmbase']")
     if base is None:

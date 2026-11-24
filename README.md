@@ -21,16 +21,21 @@ SSM over CAN, using a **Tactrix OpenPort 2.0** cable on macOS. Written for and t
 
 - macOS with Python 3.10+
 - Tactrix OpenPort 2.0 (shows up as a USB serial device; no J2534 driver needed)
-- RomRaider's logger definitions at `~/source/RomRaider/definitions/log_defs.xml`
-  (from the [RomRaider](https://github.com/RomRaider/RomRaider) project) - used for the
-  parameter list, addresses and scaling
+- RomRaider's logger definitions (`log_defs.xml`) for the parameter list, addresses and
+  scaling - downloaded by `fetch_defs.py`, see below
 
 ## Setup
 
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/python fetch_defs.py    # downloads RomRaider's log_defs.xml into definitions/
 ```
+
+`fetch_defs.py` downloads the file from a fixed [RomRaider](https://github.com/RomRaider/RomRaider)
+commit and checks its SHA-256. To use a different copy, set `SSM_LOG_DEFS=/path/to/log_defs.xml`
+or pass `--defs` to `logger.py`. An existing RomRaider checkout at
+`~/source/RomRaider/definitions/log_defs.xml` is also picked up.
 
 ## Usage
 
@@ -54,6 +59,7 @@ python3 -m venv .venv
 | `sources.py` | ECU data source (SSM over ISO 15765) and a demo simulator |
 | `openport.py` | Minimal OpenPort 2.0 driver over its USB serial port |
 | `defs.py` | Loads SSM parameter definitions from RomRaider's `log_defs.xml` |
+| `fetch_defs.py` | Downloads `log_defs.xml` from RomRaider into `definitions/` |
 | `dtc.py` | OBD-II codes, freeze frame and readiness monitors |
 | `analyse.py` | Rule-based checks on a recording |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
@@ -68,3 +74,16 @@ python3 -m venv .venv
 - The analysis thresholds are rules of thumb for a naturally aspirated FB25 with a front
   wideband A/F sensor and a rear narrowband O2 sensor. Findings are hints, not a diagnosis.
 - On this ECU, *A/F Correction #3* rests around −50 %, not 0 % (`C3_REST` in `analyse.py`).
+
+## Licence
+
+This project is released under the [MIT License](LICENSE).
+
+The parameter definitions file `log_defs.xml` belongs to the
+[RomRaider](https://github.com/RomRaider/RomRaider) project, which is licensed under the GNU
+GPL v2 or later. It is not included in this repository; `fetch_defs.py` downloads it from
+RomRaider at setup time. Thanks to the RomRaider contributors for their work documenting
+Subaru's SSM protocol.
+
+Not affiliated with or endorsed by Subaru, RomRaider or Tactrix. Use at your own risk -
+clearing codes or polling the ECU while driving is your responsibility.

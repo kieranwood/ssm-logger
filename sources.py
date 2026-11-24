@@ -81,7 +81,7 @@ class Source(threading.Thread):
 
 
 class EcuSource(Source):
-    def __init__(self, port: str | None = None, defs_path=defs.DEFAULT_DEFS):
+    def __init__(self, port: str | None = None, defs_path=None):
         super().__init__()
         self.port = port
         self.all_params = defs.load(defs_path)
@@ -163,7 +163,7 @@ class EcuSource(Source):
 class DemoSource(Source):
     """Simulated cold start that reproduces the +35% short-term trim spikes."""
 
-    def __init__(self, defs_path=defs.DEFAULT_DEFS):
+    def __init__(self, defs_path=None):
         super().__init__()
         self.params = [p for p in defs.load(defs_path) if p.supported_by(DEMO_INIT)]
         self.ecu_id = "DEMO " + DEMO_INIT[3:8].hex().upper()
