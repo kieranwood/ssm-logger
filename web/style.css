@@ -69,6 +69,8 @@
 :root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
+/* the hidden attribute must win over any display rule (e.g. the channel rows' grid) */
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   display: flex; flex-direction: column;
