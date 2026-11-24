@@ -23,17 +23,29 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   ranges it is based on.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
 
-## Browser viewer
+## Browser version
 
-**[kieranwood.github.io/ssm-logger](https://kieranwood.github.io/ssm-logger/)** opens recordings
-in any modern browser with nothing to install: drop in a CSV from this logger or from the
-OpenPort's SD card to chart it and run the same analysis. It runs this repo's own
-`recording.py` and `analyse.py` in the browser with [Pyodide](https://pyodide.org), so files are
-never uploaded. The first visit downloads about 10 MB (Python and numpy), which the browser then
-caches. It can't connect to the car yet.
+**[kieranwood.github.io/ssm-logger](https://kieranwood.github.io/ssm-logger/)** - nothing to install.
 
-[Open it with a sample recording](https://kieranwood.github.io/ssm-logger/?sample) - the failing
-front A/F sensor log shown in the screenshot above.
+- **View and analyse recordings** in any modern browser: drop in a CSV from this logger or from
+  the OpenPort's SD card. [Open it with a sample recording](https://kieranwood.github.io/ssm-logger/?sample)
+  (the failing front A/F sensor log in the screenshot above).
+- **Log live from the car** in Chrome or Edge (version 137 or newer) on a desktop computer:
+  plug in the OpenPort, turn the ignition on and press **Connect to car**. Charts, markers (M),
+  pause (Space), recording to a CSV download in the desktop app's format, analysis and fault
+  codes (read and clear) all work as in the desktop app.
+- **[Live demo](https://kieranwood.github.io/ssm-logger/?demo)**: replays the sample through an
+  emulated OpenPort and ECU, so you can try live mode without a car, in any browser. (Reading
+  fault codes in the demo also needs Chrome or Edge 137+.)
+
+It runs this repo's own `recording.py`, `analyse.py`, `defs.py` and `dtc.py` in the browser with
+[Pyodide](https://pyodide.org), and talks to the cable with Web Serial, so files and data never
+leave your computer. The first visit downloads about 10 MB (Python and numpy), which the browser
+then caches. Live mode also downloads RomRaider's `log_defs.xml` from the same pinned commit as
+`fetch_defs.py`.
+
+Live logging in the browser is new and has so far only been tested against the emulated ECU -
+if it doesn't connect to your car, the desktop app is the fallback (and please open an issue).
 
 To run it locally, serve the repo root and open `/web/`:
 
@@ -41,7 +53,8 @@ To run it locally, serve the repo root and open `/web/`:
 python3 -m http.server 8000    # then open http://localhost:8000/web/
 ```
 
-`/web/?url=path/to/log.csv` opens a recording straight away.
+`/web/?url=path/to/log.csv` opens a recording straight away, `?sample` the sample and `?demo`
+the live demo.
 
 ## Requirements
 
@@ -102,7 +115,7 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `analyse.py` | Rule-based checks on a recording |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
 | `probe.py` | Proof-of-concept connection test |
-| `web/` | Browser log viewer (deployed to GitHub Pages by `.github/workflows/pages.yml`) |
+| `web/` | Browser version: viewer, live logging over Web Serial (`openport.js`, `live.js`), demo ECU (`fake-ecu.js`), Python glue (`webapp.py`). Deployed to GitHub Pages by `.github/workflows/pages.yml` |
 | `sdcard/logcfg.txt` | OpenPort standalone (SD card) logging config for the 2012 Forester |
 
 ## Limitations

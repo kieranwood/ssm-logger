@@ -134,3 +134,34 @@ footer {
   #findings { width: auto; max-height: 45vh; border-left: 0; border-top: 1px solid var(--border); }
   .chart .label { left: 86px; }
 }
+
+/* ---------------------------------------------------------------- live mode */
+header > span { display: contents; }
+.live-only { display: none !important; }
+body.connected .live-only { display: contents !important; }
+body.connected .idle-only { display: none !important; }
+.window { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.window select {
+  font: inherit; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+}
+.btn.recording { background: var(--problem); border-color: var(--problem); color: #fff; }
+.btn.danger { background: var(--problem); border-color: var(--problem); color: #fff; }
+.empty h2 { color: var(--text); font-size: 16px; font-weight: 600; margin-top: 28px; }
+
+dialog {
+  width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 64px);
+  padding: 16px; color: var(--text); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+.dialog-head { margin-bottom: 8px; }
+#codes-text {
+  max-height: 55vh; overflow: auto; margin: 0 0 12px; padding: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre;
+}
+.confirm { margin-bottom: 12px; padding: 10px; border: 1px solid var(--problem); border-radius: 6px; }
+.confirm p { margin-top: 0; }
+.dialog-buttons { display: flex; gap: 8px; }
+.dialog-buttons .spacer { flex: 1; }

@@ -4,14 +4,35 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SSM Log Viewer</title>
-<meta name="description" content="View and analyse Subaru SSM logger and OpenPort SD-card recordings in the browser. Files never leave your computer.">
+<meta name="description" content="Log live from a Subaru ECU with a Tactrix OpenPort, or view and analyse saved SSM recordings, in the browser. Files never leave your computer.">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
 <link rel="stylesheet" href="style.css?v=dev">
 </head>
 <body>
 <header>
-  <label class="btn primary" for="file">Open recording…</label>
-  <input id="file" type="file" accept=".csv,text/csv" hidden>
+  <span class="idle-only">
+    <label class="btn primary" for="file">Open recording…</label>
+    <input id="file" type="file" accept=".csv,text/csv" hidden>
+    <button id="connect" class="btn">Connect to car</button>
+    <button id="demo" class="btn">Live demo</button>
+  </span>
+  <span class="live-only">
+    <button id="record" class="btn primary" title="Record to a CSV that downloads when you stop">Record</button>
+    <button id="mark" class="btn" title="Drop a numbered marker (M)">Mark</button>
+    <button id="pause" class="btn">Pause</button>
+    <label class="window">Window
+      <select id="window">
+        <option value="30">30 s</option>
+        <option value="60">1 min</option>
+        <option value="120" selected>2 min</option>
+        <option value="300">5 min</option>
+        <option value="600">10 min</option>
+        <option value="0">All</option>
+      </select>
+    </label>
+    <button id="codes" class="btn">Fault codes…</button>
+    <button id="disconnect" class="btn">Disconnect</button>
+  </span>
   <button id="analyse" class="btn" disabled>Analyse</button>
   <button id="reset" class="btn" disabled>Reset zoom</button>
   <span id="info" class="info"></span>
@@ -31,9 +52,15 @@
       <p><button id="sample" class="btn">Try a sample recording</button></p>
       <p class="sub">The sample is a 2012 Forester with a P0171 (system too lean) code from a failing
         front A/F sensor: fuel trim stuck near +35% while warming up, and the rear O2 sensor reading rich.</p>
+      <h2>Log live</h2>
+      <p>Plug in a Tactrix OpenPort 2.0, turn the ignition on, then
+        <button id="connect-empty" class="btn primary">Connect to car</button></p>
+      <p class="sub" id="serial-note" hidden>Connecting needs Chrome or Edge on a desktop computer.</p>
+      <p><button id="demo-empty" class="btn">Try the live demo</button></p>
+      <p class="sub">The demo replays the sample through an emulated cable and ECU, so it works without a car.</p>
       <p class="sub">Reads CSVs from the <a href="https://github.com/kieranwood/ssm-logger">ssm-logger</a>
-        desktop app and from the Tactrix OpenPort's SD-card logging, then runs the same fuel-trim and
-        sensor checks. Everything runs in your browser - the file is never uploaded.</p>
+        desktop app and from the OpenPort's SD-card logging, and runs the same fuel-trim and sensor
+        checks. Everything runs in your browser - nothing is uploaded.</p>
     </div>
   </section>
 
@@ -52,8 +79,30 @@
 <footer id="cursor-readout">Drag across a chart to zoom in · double-click to zoom out</footer>
 <div id="drop" hidden><div>Drop the CSV to open it</div></div>
 
+<dialog id="codes-dialog">
+  <div class="dialog-head"><b>Fault codes</b></div>
+  <pre id="codes-text"></pre>
+  <div id="codes-confirm" class="confirm" hidden>
+    <p><b>Clear all codes?</b> Clearing also erases the freeze frame above and resets every
+      readiness monitor; the car won't pass an emissions inspection until they complete again.
+      Codes for a fault that is still present will come back. Do this with the ignition on and the
+      engine off.</p>
+    <button id="codes-clear-yes" class="btn danger">Clear codes</button>
+    <button id="codes-clear-cancel" class="btn">Cancel</button>
+  </div>
+  <div class="dialog-buttons">
+    <button id="codes-reread" class="btn">Read again</button>
+    <button id="codes-clear" class="btn" disabled>Clear codes…</button>
+    <span class="spacer"></span>
+    <button id="codes-close" class="btn">Close</button>
+  </div>
+</dialog>
+
 <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
-<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script src="https://cdn.jsdelivr.net/pyodide/v0.28.3/full/pyodide.js"></script>
+<script src="openport.js?v=dev"></script>
+<script src="fake-ecu.js?v=dev"></script>
+<script src="live.js?v=dev"></script>
 <script src="app.js?v=dev"></script>
 </body>
 </html>
