@@ -36,6 +36,7 @@
     <button id="codes" class="btn">Fault codes…</button>
     <button id="disconnect" class="btn">Disconnect</button>
   </span>
+  <button id="view" class="btn" disabled title="Switch between charts and gauges (G)">Gauges</button>
   <button id="analyse" class="btn" disabled>Analyse</button>
   <button id="reset" class="btn" disabled>Reset zoom</button>
   <span class="menu-wrap">
@@ -85,6 +86,28 @@
         desktop app and from the OpenPort's SD-card logging, and runs the same fuel-trim and sensor
         checks. Everything runs in your browser - nothing is uploaded.</p>
     </div>
+  </section>
+  <section id="gauges" hidden>
+    <div class="gauge-bar">
+      <span class="g-rec">
+        <button id="g-play" class="btn small" title="Play the recording (Space)">▶ Play</button>
+        <input id="g-slider" type="range" min="0" max="0" value="0" step="1" aria-label="Time in the recording">
+        <span id="g-time" class="g-time"></span>
+        <select id="g-speed" aria-label="Playback speed">
+          <option value="1">1×</option><option value="2">2×</option><option value="5">5×</option>
+          <option value="10">10×</option><option value="30">30×</option>
+        </select>
+      </span>
+      <span class="g-live">Newest values</span>
+      <span class="spacer"></span>
+      <button id="g-reset" class="btn small" title="Start the min/max readings again from now">Reset min/max</button>
+      <label class="g-size">Size <select id="g-size">
+        <option value="s">Small</option><option value="m" selected>Medium</option><option value="l">Large</option>
+      </select></label>
+    </div>
+    <div id="gauge-grid" class="size-m"></div>
+    <p class="g-hint">Click channels on the left to add or remove gauges; pick a gauge style on each.
+      Pale marks show the lowest and highest values since the start (or the last reset).</p>
   </section>
   </div>
 
@@ -216,6 +239,7 @@
 <script src="openport.js?v=dev"></script>
 <script src="fake-ecu.js?v=dev"></script>
 <script src="live.js?v=dev"></script>
+<script src="gauges.js?v=dev"></script>
 <script src="app.js?v=dev"></script>
 </body>
 </html>

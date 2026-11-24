@@ -15,6 +15,11 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
 - **Live logging** of every SSM parameter the ECU reports as supported, charted in real
   time and recorded to `logs/ssm_YYYYMMDD_HHMMSS.csv`. Press **M** to drop numbered markers
   (handy while wiggling connectors), **Space** to pause and scroll back.
+- **Gauges** (the Gauges button, or **G**): a glanceable alternative to the charts. Each channel
+  gets the gauge that suits it - a needle for revs, speed, coolant and boost, a centre bar for fuel
+  trims and AFR, a bar for throttle, voltage and airflow, a big number with a one-minute trend,
+  or a lamp for switches - with coloured zones and the lowest/highest values marked. Pick which
+  channels to show and change any gauge's style; recordings can be scrubbed or played back.
 - **Fault codes**: stored, pending and permanent OBD-II codes, freeze frame, readiness
   monitors, and clearing (standard OBD-II modes 01/02/03/04/07/0A).
 - **On-board test results** (OBD mode 06): the measured value and pass/fail limits of every
@@ -145,6 +150,8 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `guided.py` | Guided tests: steps and the checks run on the data from Start to Finish |
 | `report.py` | Builds the shareable HTML report |
 | `analyse.py` | Rule-based checks on a recording |
+| `gauges.py` | Which gauge suits each channel, its range and zones (shared by both apps) |
+| `gauge_view.py` | The desktop gauge view (Qt); the browser's is `web/gauges.js` |
 | `profiles.py` | Engine profiles: the engine-specific thresholds, and auto-detection |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
 | `probe.py` | Proof-of-concept connection test |

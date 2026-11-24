@@ -34,6 +34,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import analyse
+import gauge_view
 import profiles
 import capture
 import defs
@@ -938,6 +939,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table.item(self.row_of[i], 0).setCheckState(QtCore.Qt.Checked)
         self.table.blockSignals(False)
         self._rebuild_plots()
+        self.gauge_panel.load(load_profile())
 
         if self.live:
             self.hint.setVisible(False)
@@ -1000,6 +1002,12 @@ class MainWindow(QtWidgets.QMainWindow):
         analyse_btn.setToolTip("Run fixed checks for fuel trim, sensor and charging problems")
         analyse_btn.clicked.connect(self._analyse)
         tb.addWidget(analyse_btn)
+        self.gauge_btn = QtWidgets.QPushButton("◔ Gauges (G)")
+        self.gauge_btn.setCheckable(True)
+        self.gauge_btn.setToolTip("Switch between charts and gauges")
+        self.gauge_btn.toggled.connect(self._set_gauges)
+        tb.addWidget(self.gauge_btn)
+        QtGui.QShortcut(QtGui.QKeySequence("G"), self, activated=self.gauge_btn.toggle)
         tools = QtWidgets.QToolButton()
         tools.setText("Tools ▾")
         tools.setPopupMode(QtWidgets.QToolButton.InstantPopup)
@@ -1095,21 +1103,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self.alert_banner.setStyleSheet("background:#c62828;color:white;font-weight:600;padding:6px 10px;")
         self.alert_banner.setVisible(False)
         rl.addWidget(self.alert_banner)
+        charts_page = QtWidgets.QWidget()
+        cp = QtWidgets.QVBoxLayout(charts_page)
+        cp.setContentsMargins(0, 0, 0, 0)
+        cp.setSpacing(2)
+        self.stack = QtWidgets.QStackedWidget()
+        self.stack.addWidget(charts_page)
+        self.gauge_panel = gauge_view.GaugePanel(self)
+        self.gauge_panel.changed.connect(self._sync_checks)
+        self.stack.addWidget(self.gauge_panel)
+        rl.addWidget(self.stack)
         self.plot_scroll = QtWidgets.QScrollArea()
         self.plot_scroll.setWidgetResizable(True)
         self.glw = ScrollingPlots(self.plot_scroll, self._pan_pixels)
         self.glw.setBackground("#111418")
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
         self.plot_scroll.setWidget(self.glw)
-        rl.addWidget(self.plot_scroll)
+        cp.addWidget(self.plot_scroll)
         self.time_bar = QtWidgets.QScrollBar(QtCore.Qt.Horizontal)
         self.time_bar.valueChanged.connect(self._bar_moved)
-        rl.addWidget(self.time_bar)
+        cp.addWidget(self.time_bar)
         self.hint = QtWidgets.QLabel(
             "  Reviewing - drag or swipe sideways to move through time, ⌘/Ctrl+scroll to zoom, "
             "←/→ to step. The list on the left shows values at the cursor line.")
         self.hint.setStyleSheet("color:#8a94a0;")
-        rl.addWidget(self.hint)
+        cp.addWidget(self.hint)
 
         split = QtWidgets.QSplitter()
         split.addWidget(side)
@@ -1127,6 +1145,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         i = item.data(QtCore.Qt.UserRole)
         checked = item.checkState() == QtCore.Qt.Checked
+        if self.gauge_btn.isChecked():
+            if checked != (self.channels[i].name in self.gauge_panel.sel):
+                self.gauge_panel.toggle(self.channels[i].name)
+            return
         if checked and i not in self.selected:
             self.selected.append(i)
         elif not checked and i in self.selected:
@@ -1362,6 +1384,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         if not self.reviewing:
             return len(t) - 1
+        if self.gauge_btn.isChecked():
+            return self.gauge_panel.value_index()
         at = self.cursor_t if self.cursor_t is not None else self._view()[1]
         return int(min(max(np.searchsorted(t, at), 0), len(t) - 1))
 
@@ -1395,7 +1419,8 @@ class MainWindow(QtWidgets.QMainWindow):
             msg = f"Engine profile: automatic ({p.name} - {why})" if self.buf.n else "Engine profile: automatic"
         else:
             msg = f"Engine profile: {profiles.BY_KEY[key].label}"
-        self.statusBar().showMessage(msg + ". Applies to Analyse, guided tests and reports.", 8000)
+        self.gauge_panel.load(key, fresh=False)
+        self.statusBar().showMessage(msg + ". Applies to Analyse, guided tests, reports and gauges.", 8000)
 
     def _analyse(self) -> None:
         if not self.buf.n:
@@ -1405,8 +1430,38 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.setAttribute(QtCore.Qt.WA_DeleteOnClose)
         dlg.show()                                  # non-modal: charts stay usable
 
+    # ---------------------------------------------------------------- gauge view
+    def _sync_checks(self) -> None:
+        """Tick the channels shown in the current view (charts or gauges)."""
+        gauges = self.gauge_btn.isChecked()
+        shown = set(self.gauge_panel.sel) if gauges else None
+        self.table.blockSignals(True)
+        for i, c in enumerate(self.channels):
+            on = c.name in shown if gauges else i in self.selected
+            self.table.item(self.row_of[i], 0).setCheckState(QtCore.Qt.Checked if on else QtCore.Qt.Unchecked)
+        self.table.blockSignals(False)
+
+    def _set_gauges(self, on: bool) -> None:
+        self.stack.setCurrentIndex(1 if on else 0)
+        self._sync_checks()
+        if on:
+            if not self.live:
+                i = self._value_index()
+                self.gauge_panel.set_index(i or 0)
+            self.gauge_panel.refresh()
+        else:
+            self.gauge_panel.stop_play()
+            self._refresh_curves()
+            if self.live and not self.reviewing and self.buf.n:
+                t_end = float(self.buf.times[-1])
+                if self.window_s:
+                    self._set_view(t_end - self.window_s, t_end)
+                else:
+                    self._fit_all()
+
     def show_range(self, a: float, b: float) -> None:
         """Switch to review mode and frame the time range a..b."""
+        self.gauge_btn.setChecked(False)
         if self.live and not self.reviewing:
             self.pause_btn.setChecked(True)
         pad = max(5.0, (b - a) * 0.15)
@@ -1549,6 +1604,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_lbl.setText(f"  ECU {self.source.ecu_id}  |  {self.source.status}  |  "
                                 f"{self.source.rate_hz:.0f} samples/s{rec}{paused}")
         if not samples:
+            return
+        if self.gauge_btn.isChecked():
+            self.gauge_panel.refresh()
+            self._update_values()
             return
         self._refresh_curves()
         if self.reviewing:

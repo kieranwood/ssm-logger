@@ -7,7 +7,7 @@
 "use strict";
 
 const PY_MODULES = ["recording.py", "analyse.py", "defs.py", "dtc.py", "capture.py", "guided.py", "report.py",
-                    "profiles.py"];
+                    "profiles.py", "gauges.py"];
 // Deployed site: modules are copied to py/. Local dev (serving the repo root): they sit one level up.
 const PY_BASES = ["py/", "../"];
 // Deploys stamp ?v=<commit> on app.js; reuse it so every other file is refreshed together.
@@ -47,6 +47,7 @@ const state = {
   recorder: null,
   pendingMark: null,
   dirty: false,
+  view: "charts",      // or "gauges"
 };
 
 // ------------------------------------------------------------------ Python
@@ -149,7 +150,10 @@ function showRecording(rec) {
   $("analyse").disabled = false;
   $("reset").disabled = false;
   $("tools").disabled = false;
+  $("view").disabled = false;
   document.body.classList.toggle("live", rec.live);
+  setupGauges();
+  setView(state.view);
 }
 
 function updateInfo() {
@@ -191,14 +195,16 @@ function buildChannelList() {
 function refreshChannelList() {
   for (const row of $("channels").children) {
     const i = Number(row.dataset.idx);
-    const on = state.selected.includes(i);
+    const gauges = state.view === "gauges";
+    const on = gauges ? gv.sel.includes(state.rec.channels[i].name) : state.selected.includes(i);
     row.classList.toggle("on", on);
-    row.querySelector(".swatch").style.background = on ? colorFor(i) : "transparent";
+    row.querySelector(".swatch").style.background = !on ? "transparent" : gauges ? "var(--accent)" : colorFor(i);
   }
   updateValues();
 }
 
 function toggleChannel(i) {
+  if (state.view === "gauges") { toggleGauge(state.rec.channels[i].name); return; }
   const at = state.selected.indexOf(i);
   if (at >= 0) {
     state.selected.splice(at, 1);
@@ -404,6 +410,7 @@ function showFindings(fs = state.rec.findings, title = "Analysis") {
 }
 
 function selectFinding(li, f) {
+  if (state.view === "gauges") setView("charts");
   const was = li.classList.contains("sel");
   for (const el of $("finding-list").children) el.classList.remove("sel");
   if (was) {
@@ -478,7 +485,9 @@ function scheduleLiveRedraw() {
   setTimeout(() => {
     liveRedrawQueued = false;
     if (!state.rec?.live) return;
-    if (state.following) {
+    if (state.view === "gauges") {
+      drawGauges();
+    } else if (state.following) {
       for (const [i, c] of state.charts) c.u.setData(seriesData(i), false);
       followLatest();
     } else if (state.dirty) {
@@ -604,6 +613,7 @@ function endLive() {
   if (state.rec?.live) {
     state.rec.live = false;
     state.rec.name += " (stopped)";
+    gv.idx = Math.max(0, state.rec.t.length - 1);     // gauges stay on the last values
     updateInfo();
     document.body.classList.remove("live");
   }
@@ -1255,6 +1265,225 @@ $("tools-menu").addEventListener("click", (e) => {
   else if (act === "capset") openCapSettings();
   else if (act === "alertset") openAlertSettings();
 });
+// ------------------------------------------------------------------ gauge view (gauges.py, gauges.js)
+
+const GAUGE_KEY = "ssm-logger.gauges";
+const gv = {
+  specs: {}, types: [], sel: [], typeOf: {}, index: new Map(), tiles: new Map(), cache: new Map(),
+  idx: 0, resetT: -Infinity, playing: false, playT: 0, lastFrame: 0,
+};
+
+function loadGaugePrefs() {
+  try { return JSON.parse(localStorage.getItem(GAUGE_KEY) || "{}"); } catch { return {}; }
+}
+
+function saveGaugePrefs() {
+  const p = loadGaugePrefs();
+  const types = { ...(p.types || {}) };
+  for (const n of gv.index.keys()) delete types[n];          // replace this log's overrides
+  Object.assign(types, gv.typeOf);
+  const next = { selected: gv.sel.slice(), types, size: $("g-size").value };
+  try { localStorage.setItem(GAUGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+}
+
+/** Load the gauge specs for the current recording; fresh=false keeps the time position. */
+function setupGauges(fresh = true) {
+  const rec = state.rec;
+  const d = dataBytes();
+  const chans = rec.channels.map((c) => [c.name, c.units || "", !!c.switch]);
+  const res = JSON.parse(state.py.globals.get("gauge_specs")(JSON.stringify(chans), d.t, d.y, d.names));
+  gv.specs = res.specs;
+  gv.types = res.types;
+  gv.index = new Map(rec.channels.map((c, i) => [c.name, i]));
+  if (fresh) {
+    const prefs = loadGaugePrefs();
+    const saved = (prefs.selected || []).filter((n) => gv.index.has(n));
+    gv.sel = saved.length ? saved : res.selection;
+    gv.typeOf = {};
+    for (const [n, t] of Object.entries(prefs.types || {})) if (gv.index.has(n)) gv.typeOf[n] = t;
+    if (prefs.size) $("g-size").value = prefs.size;
+    $("gauge-grid").className = `size-${$("g-size").value}`;
+    gv.resetT = -Infinity;
+    gv.idx = 0;
+    stopPlay();
+  }
+  gv.cache.clear();
+  buildGaugeTiles();
+}
+
+function buildGaugeTiles() {
+  const grid = $("gauge-grid");
+  grid.replaceChildren();
+  gv.tiles.clear();
+  for (const name of gv.sel) {
+    const i = gv.index.get(name);
+    const ch = state.rec.channels[i];
+    const el = document.createElement("div");
+    el.className = "gauge";
+    el.innerHTML = `<div class="g-head"><span class="g-name"></span><select class="g-type" aria-label="Gauge style"></select>` +
+      `<button class="g-close" aria-label="Remove gauge" title="Remove">✕</button></div><canvas></canvas>`;
+    const label = el.querySelector(".g-name");
+    label.textContent = name;
+    label.title = ch.units ? `${name} (${ch.units})` : name;
+    const sel = el.querySelector(".g-type");
+    for (const [k, text] of gv.types) sel.append(new Option(k === gv.specs[name].default ? `${text} ·` : text, k));
+    sel.value = gv.typeOf[name] || gv.specs[name].default;
+    sel.title = "Gauge style (· marks the usual one for this channel)";
+    sel.addEventListener("change", () => {
+      if (sel.value === gv.specs[name].default) delete gv.typeOf[name];
+      else gv.typeOf[name] = sel.value;
+      saveGaugePrefs();
+      drawGauges();
+    });
+    el.querySelector(".g-close").addEventListener("click", () => toggleGauge(name));
+    grid.append(el);
+    gv.tiles.set(name, { i, canvas: el.querySelector("canvas") });
+  }
+  drawGauges();
+}
+
+function toggleGauge(name) {
+  const at = gv.sel.indexOf(name);
+  if (at >= 0) gv.sel.splice(at, 1);
+  else gv.sel.push(name);
+  saveGaugePrefs();
+  buildGaugeTiles();
+  refreshChannelList();
+}
+
+/** First index with t[k] >= x. */
+function bsearch(t, x) {
+  let a = 0, b = t.length;
+  while (a < b) { const m = (a + b) >> 1; if (t[m] < x) a = m + 1; else b = m; }
+  return a;
+}
+
+/** Min and max of col[from..to], extended incrementally while from stays put. */
+function rangeOf(key, col, t, from, to) {
+  let c = gv.cache.get(key);
+  if (!c || c.from !== from || c.t0 !== t[from] || to < c.to) {
+    c = { from, t0: t[from], to: from - 1, mn: Infinity, mx: -Infinity };
+  }
+  for (let k = c.to + 1; k <= to; k++) {
+    const x = col[k];
+    if (x != null && x === x) { if (x < c.mn) c.mn = x; if (x > c.mx) c.mx = x; }
+  }
+  c.to = to;
+  gv.cache.set(key, c);
+  return c.mn <= c.mx ? [c.mn, c.mx] : [null, null];
+}
+
+function gaugeIdx() {
+  const n = state.rec.t.length;
+  if (!n) return null;
+  return state.rec.live ? n - 1 : Math.min(gv.idx, n - 1);
+}
+
+function drawGauges() {
+  if (state.view !== "gauges" || !state.rec) return;
+  const rec = state.rec, t = rec.t, n = t.length;
+  const idx = gaugeIdx();
+  if (!rec.live) {
+    $("g-slider").max = Math.max(0, n - 1);
+    $("g-time").textContent = idx == null ? "" : `${(t[idx] - t[0]).toFixed(1)} s of ${(t[n - 1] - t[0]).toFixed(0)} s`;
+  }
+  let from = idx == null ? 0 : bsearch(t, gv.resetT);
+  if (idx != null && from > idx) from = 0;          // scrubbed back before the reset point
+  const colors = gaugeColors();
+  for (const [name, tile] of gv.tiles) {
+    const ch = rec.channels[tile.i], col = rec.y[tile.i];
+    const type = gv.typeOf[name] || gv.specs[name].default;
+    let spec = gv.specs[name].by_type[type];
+    const value = idx == null ? null : col[idx];
+    const [mn, mx] = idx == null ? [null, null] : rangeOf(`${name}|mm`, col, t, from, idx);
+    if (type !== "digital" && type !== "lamp" && (spec.lo == null || spec.hi == null)) {
+      const [a, b] = n ? rangeOf(`${name}|all`, col, t, 0, n - 1) : [null, null];
+      const [lo, hi, step] = niceRange(a ?? 0, b ?? 1);
+      spec = { ...spec, lo, hi, step };
+    }
+    let hist = null;
+    if (type === "digital" && idx != null) {
+      const k0 = bsearch(t, t[idx] - 60), every = Math.max(1, Math.ceil((idx - k0 + 1) / 240));
+      const ts = [], vs = [];
+      for (let k = k0; k <= idx; k += every) { ts.push(t[k]); vs.push(col[k]); }
+      hist = [ts, vs];
+    }
+    drawGauge(tile.canvas, { spec, value: value ?? null, min: mn, max: mx,
+                             decimals: spec.decimals ?? Math.min(ch.decimals ?? 2, 2),
+                             units: ch.units || "", hist, tNow: idx == null ? 0 : t[idx] }, colors);
+  }
+}
+
+function setView(v) {
+  if (!state.rec) return;
+  state.view = v;
+  const gauges = v === "gauges";
+  $("charts").hidden = gauges;
+  $("gauges").hidden = !gauges;
+  $("view").textContent = gauges ? "Charts" : "Gauges";
+  refreshChannelList();
+  if (gauges) {
+    if (!state.rec.live && state.cursorIdx != null) gv.idx = state.cursorIdx;
+    $("g-slider").value = gv.idx;
+    drawGauges();
+  } else {
+    stopPlay();
+    resizeCharts();
+    if (state.rec.live) {
+      for (const [i, c] of state.charts) c.u.setData(seriesData(i), false);
+      if (state.following) followLatest(); else redrawAll();
+    }
+  }
+}
+
+function startPlay() {
+  const rec = state.rec;
+  if (!rec || rec.live || rec.t.length < 2) return;
+  if (gv.idx >= rec.t.length - 1) gv.idx = 0;
+  gv.playing = true;
+  gv.playT = rec.t[gv.idx];
+  gv.lastFrame = performance.now();
+  $("g-play").textContent = "❚❚ Pause";
+  requestAnimationFrame(playFrame);
+}
+
+function stopPlay() {
+  gv.playing = false;
+  $("g-play").textContent = "▶ Play";
+}
+
+function playFrame(now) {
+  if (!gv.playing || !state.rec || state.rec.live) return;
+  const t = state.rec.t;
+  gv.playT += ((now - gv.lastFrame) / 1000) * Number($("g-speed").value);
+  gv.lastFrame = now;
+  gv.idx = Math.min(bsearch(t, gv.playT), t.length - 1);
+  if (gv.idx >= t.length - 1) stopPlay();
+  $("g-slider").value = gv.idx;
+  drawGauges();
+  if (gv.playing) requestAnimationFrame(playFrame);
+}
+
+$("view").addEventListener("click", () => setView(state.view === "gauges" ? "charts" : "gauges"));
+$("g-play").addEventListener("click", () => (gv.playing ? stopPlay() : startPlay()));
+$("g-slider").addEventListener("input", (e) => {
+  gv.idx = Number(e.target.value);
+  if (gv.playing) gv.playT = state.rec.t[gv.idx];
+  drawGauges();
+});
+$("g-reset").addEventListener("click", () => {
+  const idx = gaugeIdx();
+  gv.resetT = idx == null ? -Infinity : state.rec.t[idx];
+  drawGauges();
+});
+$("g-size").addEventListener("change", (e) => {
+  $("gauge-grid").className = `size-${e.target.value}`;
+  saveGaugePrefs();
+  requestAnimationFrame(drawGauges);
+});
+window.addEventListener("resize", () => requestAnimationFrame(drawGauges));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => requestAnimationFrame(drawGauges));
+
 // ------------------------------------------------------------------ engine profile
 
 const PROFILE_KEY = "ssm-logger.profile";
@@ -1278,6 +1507,7 @@ $("profile").addEventListener("change", (e) => {
   $("tools-menu").hidden = true;
   const label = e.target.selectedOptions[0].textContent;
   setStatus(`Engine profile: ${label}`);
+  if (state.rec) setupGauges(false);
   // refresh an open analysis so it reflects the new thresholds
   if (state.rec && !$("findings").hidden && $("findings-title").textContent === "Analysis") analyseNow(true);
 });
@@ -1312,7 +1542,12 @@ $("window").addEventListener("change", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (!state.rec?.live || e.target.closest("input, select, textarea, dialog")) return;
+  if (!state.rec || e.target.closest("input:not([type=range]), select, textarea, dialog")) return;
+  if (e.key === "g" || e.key === "G") { setView(state.view === "gauges" ? "charts" : "gauges"); return; }
+  if (!state.rec.live) {
+    if (e.key === " " && state.view === "gauges") { e.preventDefault(); gv.playing ? stopPlay() : startPlay(); }
+    return;
+  }
   if (e.key === "m" || e.key === "M") addMark();
   else if (e.key === "c" || e.key === "C") captureNow();
   else if (e.key === " ") { e.preventDefault(); setFollowing(!state.following); }

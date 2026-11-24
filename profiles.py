@@ -35,6 +35,7 @@ class Profile:
     # turbo only
     boost_psi: float = 5.0             # above this the engine is "in boost"
     max_boost_afr: float = 12.0        # leaner than this under boost is dangerous
+    redline_rpm: float = 6000.0        # approximate, for the rev gauge's red zone only
 
     @property
     def label(self) -> str:
@@ -44,9 +45,9 @@ class Profile:
 PROFILES = [
     Profile("na25", "Naturally aspirated 2.5 L", "FB25, EJ25 non-turbo", 2.5),
     Profile("na20", "Naturally aspirated 2.0 L", "FB20, FA20 (BRZ/86), EJ20 non-turbo", 2.0,
-            idle_maf=(2.0, 3.5), maf_bands=(4.0, 12.0, 32.0)),
+            idle_maf=(2.0, 3.5), maf_bands=(4.0, 12.0, 32.0), redline_rpm=6500.0),
     Profile("turbo", "Turbo", "EJ20/EJ25 turbo, FA20DIT, FA24DIT", 2.5, turbo=True,
-            idle_maf=(3.0, 6.0), maf_bands=(5.0, 20.0, 60.0), c3_rest=None),
+            idle_maf=(3.0, 6.0), maf_bands=(5.0, 20.0, 60.0), c3_rest=None, redline_rpm=6500.0),
 ]
 BY_KEY = {p.key: p for p in PROFILES}
 DEFAULT = BY_KEY["na25"]

@@ -16,6 +16,8 @@
   --warning: #c27c00;
   --info-c: #687076;
   --ok: #18794e;
+  --g-track: #e6e9ed;
+  --g-cold: #2ea7c9;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -36,6 +38,8 @@
     --warning: #f5a524;
     --info-c: #9ba1a6;
     --ok: #3ecf8e;
+    --g-track: #2a2e33;
+    --g-cold: #4cc4e6;
   }
 }
 
@@ -90,6 +94,36 @@ main { flex: 1; display: flex; min-height: 0; }
 
 #charts { flex: 1; overflow-y: auto; min-width: 0; background: var(--chart-bg); position: relative; }
 .chart { position: relative; border-bottom: 1px solid var(--border); }
+
+/* ---------------------------------------------------------------- gauge view */
+#gauges { flex: 1; overflow-y: auto; min-width: 0; padding: 10px 12px; background: var(--bg); }
+#gauges[hidden], #charts[hidden] { display: none; }
+.gauge-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; }
+.gauge-bar .spacer { flex: 1; }
+.g-rec { display: flex; align-items: center; gap: 8px; flex: 1 1 320px; min-width: 0; }
+#g-slider { flex: 1; min-width: 80px; }
+.g-time { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 6.5em; }
+.g-live { color: var(--muted); }
+body.live .g-rec { display: none; }
+body:not(.live) .g-live { display: none; }
+#gauge-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(var(--gw), 1fr)); }
+#gauge-grid.size-s { --gw: 170px; --gh: 150px; }
+#gauge-grid.size-m { --gw: 220px; --gh: 195px; }
+#gauge-grid.size-l { --gw: 320px; --gh: 280px; }
+.gauge {
+  height: var(--gh); display: flex; flex-direction: column; padding: 6px 6px 2px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; min-width: 0;
+}
+.g-head { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.g-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.g-type { font-size: 11px; max-width: 92px; color: var(--muted); background: transparent; border: 1px solid transparent;
+  border-radius: 4px; }
+.gauge:hover .g-type, .g-type:focus { border-color: var(--border); color: var(--text); }
+.g-close { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 2px;
+  visibility: hidden; }
+.gauge:hover .g-close { visibility: visible; }
+.gauge canvas { flex: 1; width: 100%; min-height: 0; display: block; }
+.g-hint { color: var(--muted); font-size: 12px; margin: 10px 2px; }
 .chart .label {
   position: absolute; left: 86px; top: 2px; z-index: 2; pointer-events: none;
   font-size: 13px; color: var(--text); text-shadow: 0 0 3px var(--chart-bg);

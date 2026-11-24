@@ -231,6 +231,15 @@ def read_readiness(js_request) -> str:
     })
 
 
+# ------------------------------------------------------------------ gauge view
+
+def gauge_specs(channels_json: str, t_bytes, y_bytes, names_json: str) -> str:
+    """Gauge type, range and zones for each channel ([name, units, is_switch]), for the profile."""
+    import gauges
+    t, series = _arrays(t_bytes, y_bytes, json.loads(names_json))
+    return json.dumps(gauges.all_specs([tuple(c) for c in json.loads(channels_json)], _profile, series))
+
+
 # ------------------------------------------------------------------ guided tests
 
 def guided_list() -> str:
