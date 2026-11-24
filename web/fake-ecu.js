@@ -8,7 +8,15 @@
 const DEMO_ECU_INIT = "a2100a7152345007f3fac98c0202fea800000046ce54fdb800000f2000000000" +
                       "00dc00005d1f3080f024100043fb00f5c98e0000000121f18000b1";
 
-const hexBytes = (hex) => new Uint8Array(hex.match(/../g).map((h) => parseInt(h, 16)));
+// Simulated mode 06 test results (same as DEMO_MODE06 in sources.py): MID -> records.
+const DEMO_MODE06 = {
+  0x01: "01 05 10 0048 0000 0190 01 06 10 0052 0000 0190 01 81 84 0370 fc18 03e8",
+  0x21: "21 80 01 01a4 0000 02bc",
+  0x41: "41 81 14 0019 0000 0050",
+  0xa1: "a1 0b 24 0000 0000 ffff a1 0c 24 0000 0000 ffff",
+};
+
+const hexBytes = (hex) => new Uint8Array(hex.replace(/\s+/g, "").match(/../g).map((h) => parseInt(h, 16)));
 
 class DemoEcu {
   /** params: param_table() rows; sample: {t: number[], columns: Map<name, number[]>} */
@@ -97,6 +105,13 @@ class DemoEcu {
         return new Uint8Array([0x41, pid, ...supported(pid, [...Object.keys(live).map(Number), 0x20, 0x40])]);
       }
       return live[pid] ? new Uint8Array([0x41, pid, ...live[pid]]) : null;
+    }
+    if (mode === 0x06 && req.length === 2) {
+      const mid = req[1];
+      if (mid % 0x20 === 0) {
+        return new Uint8Array([0x46, mid, ...supported(mid, [...Object.keys(DEMO_MODE06).map(Number), 0x20, 0x40, 0x60, 0x80, 0xa0])]);
+      }
+      return DEMO_MODE06[mid] ? new Uint8Array([0x46, ...hexBytes(DEMO_MODE06[mid])]) : null;
     }
     if (this.codes[mode]) {
       const c = this.codes[mode];

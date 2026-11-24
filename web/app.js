@@ -6,7 +6,7 @@
 // Nothing is uploaded anywhere.
 "use strict";
 
-const PY_MODULES = ["recording.py", "analyse.py", "defs.py", "dtc.py"];
+const PY_MODULES = ["recording.py", "analyse.py", "defs.py", "dtc.py", "capture.py"];
 // Deployed site: modules are copied to py/. Local dev (serving the repo root): they sit one level up.
 const PY_BASES = ["py/", "../"];
 // Deploys stamp ?v=<commit> on app.js; reuse it so every other file is refreshed together.
@@ -470,6 +470,7 @@ function scheduleLiveRedraw() {
       redrawAll();
     }
     state.dirty = false;
+    captureTick();
     updateValues();
     updateInfo();
     updateLiveStatus();
@@ -482,6 +483,12 @@ function updateLiveStatus() {
   const rec = state.recorder;
   const parts = [s.rate ? `${s.rate.toFixed(1)} samples/s` : ""];
   if (rec) parts.push(`recording ${rec.rows} rows`);
+  const t = state.rec?.t;
+  if (t?.length && (state.capArmed || state.capPending)) {
+    const cs = state.py.globals.get("capture_status")(t[t.length - 1]);
+    state.capPending = cs.startsWith("capturing");
+    parts.push(`auto-capture ${cs}`);
+  }
   if (s.statusText === "Logging") {
     $("cursor-readout").textContent = ["Logging", ...parts].filter(Boolean).join(" · ") +
       (state.following ? "" : " · paused view (Space to resume)");
@@ -499,6 +506,13 @@ function onLiveSample(t, row) {
   }
   rec.t.push(t);
   row.forEach((v, i) => rec.y[i].push(Number.isFinite(v) ? v : null));
+  if (state.capArmed) {
+    const reason = state.py.globals.get("capture_update")(t, row);
+    if (reason) {
+      addMark();
+      setStatus(`Auto-capture triggered: ${reason}`);
+    }
+  }
   if (state.recorder) state.recorder.write(t, row, state.pendingMark);
   state.pendingMark = null;
   state.dirty = true;
@@ -538,6 +552,7 @@ async function startLive(port, { demo }) {
         channels, t: [], y: channels.map(() => []), marks: [], findings: [], live: true,
       });
       setFollowing(true);
+      setupCapture(channels, ecuId);
     },
     onSample: onLiveSample,
   });
@@ -550,6 +565,11 @@ async function startLive(port, { demo }) {
 
 function endLive() {
   if (state.recorder) stopRecording();
+  const due = state.py?.globals.get("capture_due")(Number.MAX_VALUE);
+  if (due) saveCapture(...JSON.parse(due));
+  state.capArmed = false;
+  state.capPending = false;
+  updateCapButton();
   state.session = null;
   document.body.classList.remove("connected");
   $("cursor-readout").textContent = "Disconnected. The charts stay open for review.";
@@ -608,14 +628,166 @@ function stopRecording() {
   $("record").textContent = "Record";
   $("record").classList.remove("recording");
   if (!rec || !rec.rows) return;
+  download(rec.blob(), rec.filename());
+  setStatus(`Saved ${rec.filename()} (${rec.rows} rows) to your downloads`);
+}
+
+function download(blob, name) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(rec.blob());
-  a.download = rec.filename();
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
-  setStatus(`Saved ${a.download} (${rec.rows} rows) to your downloads`);
+}
+
+// ------------------------------------------------------------------ auto-capture (capture.py)
+
+const CAP_KEY = "ssm-logger.capture";
+const POLL_CODES_MS = 10_000;
+
+function loadCapSettings() {
+  try { return localStorage.getItem(CAP_KEY) || ""; } catch { return ""; }
+}
+
+function storeCapSettings(json) {
+  try { localStorage.setItem(CAP_KEY, json); } catch { /* private mode: settings last this session */ }
+}
+
+function applyCapSettings(json) {
+  const names = JSON.stringify(state.rec.channels.map((c) => c.name));
+  const res = JSON.parse(state.py.globals.get("capture_setup")(json, names));
+  state.capSettings = res.settings;
+  state.capMissing = res.missing;
+}
+
+function setupCapture(channels, ecuId) {
+  state.capEcuId = ecuId;
+  state.capArmed = false;
+  state.capPolling = false;
+  state.capNextPoll = 0;
+  applyCapSettings(loadCapSettings());
+  updateCapButton();
+}
+
+function updateCapButton() {
+  $("autocap").classList.toggle("armed", !!state.capArmed);
+  $("autocap").textContent = state.capArmed ? "Auto-capture on" : "Auto-capture";
+}
+
+function setArmed(on) {
+  state.capArmed = on;
+  updateCapButton();
+  if (!on) return;
+  state.py.globals.get("capture_reset_codes")();     // codes present now are not "new"
+  state.capNextPoll = 0;
+  if (state.capMissing.length) {
+    setStatus(`Auto-capture: this ECU doesn't log ${state.capMissing.join(", ")} - those rules are ignored`);
+  }
+}
+
+function latestT() {
+  const t = state.rec.t;
+  return t[t.length - 1];
+}
+
+function captureNow() {
+  if (!state.rec?.live || !state.rec.t.length) return;
+  if (state.py.globals.get("capture_trigger")(latestT(), "manual capture")) {
+    addMark();
+    setStatus(`Capturing - saves ${state.capSettings.after_s} s from now`);
+  } else {
+    setStatus("A capture is already in progress");
+  }
+}
+
+function captureTick() {
+  if (!state.rec?.live || !state.rec.t.length || !state.capSettings) return;
+  if (state.capArmed && state.capSettings.on_new_code && !state.capPolling && state.session?.op &&
+      performance.now() >= state.capNextPoll) {
+    state.capPolling = true;
+    state.capNextPoll = performance.now() + POLL_CODES_MS;
+    state.session.runJob((request) => state.py.globals.get("capture_poll_codes").callPromising(request))
+      .then((json) => state.py.globals.get("capture_codes")(latestT(), json))
+      .catch((e) => {
+        state.capNextPoll = Infinity;          // don't keep failing every 10 s
+        setStatus(`Auto-capture can't check for new codes: ${jspiHint(e)}`, true);
+      })
+      .finally(() => { state.capPolling = false; });
+  }
+  const due = state.py.globals.get("capture_due")(latestT());
+  if (due) saveCapture(...JSON.parse(due));
+}
+
+function saveCapture(tTrig, reason) {
+  const rec = state.rec, st = state.capSettings;
+  const lo = tTrig - st.before_s, hi = tTrig + st.after_s;
+  let i0 = rec.t.findIndex((v) => v >= lo);
+  if (i0 < 0) i0 = rec.t.length;
+  let i1 = i0;
+  while (i1 < rec.t.length && rec.t[i1] <= hi) i1++;
+  const n = i1 - i0;
+  const t = Float64Array.from(rec.t.slice(i0, i1));
+  const y = new Float64Array(rec.channels.length * n);
+  rec.y.forEach((col, c) => { for (let k = 0; k < n; k++) y[c * n + k] = col[i0 + k] ?? NaN; });
+  const when = new Date(Date.now() - (latestT() - tTrig) * 1000);
+  const p = (x) => String(x).padStart(2, "0");
+  const ymd = `${when.getFullYear()}-${p(when.getMonth() + 1)}-${p(when.getDate())}`;
+  const hms = `${p(when.getHours())}:${p(when.getMinutes())}:${p(when.getSeconds())}`;
+  const labels = rec.channels.map((c) => (c.units ? `${c.name} (${c.units})` : c.name));
+  const text = state.py.globals.get("capture_csv_text")(JSON.stringify(labels), state.capEcuId,
+    new Uint8Array(t.buffer), new Uint8Array(y.buffer), tTrig, reason, `${ymd} ${hms}`);
+  const name = `ssm_${ymd.replace(/-/g, "")}_${hms.replace(/:/g, "")}_capture.csv`;
+  download(new Blob([text], { type: "text/csv" }), name);
+  setStatus(`Captured ${reason} - saved ${name} to your downloads`);
+}
+
+function ruleRow(r) {
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td><input type="checkbox" class="on"></td>
+    <td><input type="text" class="ch" list="cap-channels"></td>
+    <td><select class="op"><option>&gt;</option><option>&lt;</option></select></td>
+    <td><input type="number" class="val" step="any"></td>
+    <td><input type="number" class="hold" min="0" step="0.5"></td>
+    <td><button class="btn small del" aria-label="Remove rule">✕</button></td>`;
+  tr.querySelector(".on").checked = r.enabled;
+  tr.querySelector(".ch").value = r.channel;
+  tr.querySelector(".op").value = r.op;
+  tr.querySelector(".val").value = r.value;
+  tr.querySelector(".hold").value = r.hold_s;
+  tr.querySelector(".del").addEventListener("click", () => tr.remove());
+  return tr;
+}
+
+function openCapSettings() {
+  const st = state.capSettings;
+  $("cap-channels").replaceChildren(...state.rec.channels.map((c) => Object.assign(document.createElement("option"), { value: c.name })));
+  $("cap-rules").replaceChildren(...st.rules.map(ruleRow));
+  $("cap-code").checked = st.on_new_code;
+  $("cap-running").checked = st.running_only;
+  $("cap-before").value = st.before_s;
+  $("cap-after").value = st.after_s;
+  $("cap-dialog").showModal();
+}
+
+function saveCapDialog() {
+  const num = (el, d) => (Number.isFinite(parseFloat(el.value)) ? parseFloat(el.value) : d);
+  const rules = [...$("cap-rules").children].map((tr) => ({
+    channel: tr.querySelector(".ch").value.trim(),
+    op: tr.querySelector(".op").value,
+    value: num(tr.querySelector(".val"), 0),
+    hold_s: Math.max(0, num(tr.querySelector(".hold"), 0)),
+    enabled: tr.querySelector(".on").checked,
+  })).filter((r) => r.channel);
+  const json = JSON.stringify({
+    rules, on_new_code: $("cap-code").checked, running_only: $("cap-running").checked,
+    before_s: Math.min(600, Math.max(1, num($("cap-before"), 30))),
+    after_s: Math.min(600, Math.max(1, num($("cap-after"), 30))),
+  });
+  storeCapSettings(json);
+  applyCapSettings(json);
+  $("cap-dialog").close();
 }
 
 function addMark() {
@@ -725,6 +897,12 @@ $("codes-clear").addEventListener("click", () => { $("codes-confirm").hidden = f
 $("codes-clear-cancel").addEventListener("click", () => { $("codes-confirm").hidden = true; });
 $("codes-clear-yes").addEventListener("click", clearCodes);
 $("codes-close").addEventListener("click", () => $("codes-dialog").close());
+$("autocap").addEventListener("click", () => setArmed(!state.capArmed));
+$("capnow").addEventListener("click", captureNow);
+$("capset").addEventListener("click", openCapSettings);
+$("cap-add").addEventListener("click", () => $("cap-rules").appendChild(ruleRow({ channel: "", op: ">", value: 0, hold_s: 2, enabled: true })));
+$("cap-cancel").addEventListener("click", () => $("cap-dialog").close());
+$("cap-save").addEventListener("click", saveCapDialog);
 $("window").addEventListener("change", (e) => {
   state.windowSec = Number(e.target.value);
   if (state.following) followLatest();
@@ -733,6 +911,7 @@ $("window").addEventListener("change", (e) => {
 document.addEventListener("keydown", (e) => {
   if (!state.rec?.live || e.target.closest("input, select, textarea, dialog")) return;
   if (e.key === "m" || e.key === "M") addMark();
+  else if (e.key === "c" || e.key === "C") captureNow();
   else if (e.key === " ") { e.preventDefault(); setFollowing(!state.following); }
 });
 window.addEventListener("beforeunload", (e) => {

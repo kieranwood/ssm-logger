@@ -13,6 +13,7 @@ Command line use (when the logger is not running):
 
 from __future__ import annotations
 
+import math
 import sys
 from dataclasses import dataclass
 from typing import Callable
@@ -125,9 +126,13 @@ def exchange(request: Callable[[bytes, float], bytes | None], payload: bytes,
     return reply
 
 
-def read_all(request: Callable[[bytes, float], bytes | None]) -> list[DtcResult]:
+def read_all(request: Callable[[bytes, float], bytes | None],
+             modes: tuple[int, ...] | None = None) -> list[DtcResult]:
+    """Read every code type, or only the given request modes (e.g. (0x03, 0x07))."""
     results = []
     for mode, title in MODES:
+        if modes is not None and mode not in modes:
+            continue
         reply = exchange(request, bytes([mode]), timeout=1.0)
         if reply is None:
             # Some ECUs (e.g. 2012 Forester 7152345007 for mode 0A) just stay silent.
@@ -300,6 +305,206 @@ def format_status(st: ObdStatus) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- mode 06 on-board test results
+# The measured value and pass/fail limits of each self-test the ECU has run (SAE J1979, CAN
+# format). A value near a limit is an early warning, before the test fails and sets a code.
+
+def _sensor_mids(base: int, kind: str) -> dict[int, str]:
+    return {base + i: f"{kind} {name}" for i, name in enumerate(_SENSOR_NAMES)}
+
+
+_SENSOR_NAMES = ["bank 1 sensor 1 (front)", "bank 1 sensor 2 (rear)", "bank 1 sensor 3", "bank 1 sensor 4",
+                 "bank 2 sensor 1", "bank 2 sensor 2", "bank 2 sensor 3", "bank 2 sensor 4"]
+
+OBDMID_NAMES: dict[int, str] = {
+    **_sensor_mids(0x01, "O2 / A/F sensor"),
+    0x21: "Catalyst bank 1", 0x22: "Catalyst bank 2",
+    0x31: "EGR bank 1", 0x32: "EGR bank 2", 0x35: "VVT bank 1", 0x36: "VVT bank 2",
+    0x39: "EVAP (cap off / 0.150\")", 0x3A: "EVAP (0.090\" leak)", 0x3B: "EVAP (0.040\" leak)",
+    0x3C: "EVAP (0.020\" leak)", 0x3D: "EVAP purge flow",
+    **_sensor_mids(0x41, "O2 / A/F sensor heater"),
+    0x61: "Heated catalyst bank 1", 0x62: "Heated catalyst bank 2",
+    0x71: "Secondary air 1", 0x72: "Secondary air 2",
+    0x81: "Fuel system bank 1", 0x82: "Fuel system bank 2",
+    0x85: "Boost pressure bank 1", 0x86: "Boost pressure bank 2",
+    0xA1: "Misfire (all cylinders)",
+    **{0xA2 + i: f"Misfire cylinder {i + 1}" for i in range(12)},
+    0xB0: "Particulate filter bank 1", 0xB1: "Particulate filter bank 2",
+}
+
+# Standard test ids; 0x80 and up are manufacturer-defined (no published names).
+TID_NAMES = {
+    0x01: "Rich-to-lean threshold voltage", 0x02: "Lean-to-rich threshold voltage",
+    0x03: "Low voltage for switch time", 0x04: "High voltage for switch time",
+    0x05: "Rich-to-lean switch time", 0x06: "Lean-to-rich switch time",
+    0x07: "Minimum voltage in test", 0x08: "Maximum voltage in test",
+    0x09: "Time between transitions", 0x0A: "Sensor period",
+    0x0B: "Misfire count, average of last 10 drives", 0x0C: "Misfire count, last/current drive",
+}
+
+# Unit and scaling ids: id -> (scale per bit, offset, unit). Ids 0x80+ are the signed versions.
+UNITS: dict[int, tuple[float, float, str]] = {
+    0x01: (1, 0, ""), 0x02: (0.1, 0, ""), 0x03: (0.01, 0, ""), 0x04: (0.001, 0, ""),
+    0x05: (0.0000305, 0, ""), 0x06: (0.000305, 0, ""), 0x07: (0.25, 0, "rpm"),
+    0x08: (0.01, 0, "km/h"), 0x09: (1, 0, "km/h"), 0x0A: (0.000122, 0, "V"), 0x0B: (0.001, 0, "V"),
+    0x0C: (0.01, 0, "V"), 0x0D: (0.00390625, 0, "mA"), 0x0E: (0.001, 0, "A"), 0x0F: (0.01, 0, "A"),
+    0x10: (0.001, 0, "s"), 0x11: (0.1, 0, "s"), 0x12: (1, 0, "s"), 0x13: (0.001, 0, "Ω"),
+    0x14: (1, 0, "Ω"), 0x15: (1000, 0, "Ω"), 0x16: (0.1, -40, "°C"), 0x17: (0.01, 0, "kPa"),
+    0x18: (0.0117, 0, "kPa"), 0x19: (0.079, 0, "kPa"), 0x1A: (1, 0, "kPa"), 0x1B: (10, 0, "kPa"),
+    0x1C: (0.01, 0, "°"), 0x1D: (0.5, 0, "°"), 0x1E: (0.0000305, 0, "λ"), 0x1F: (0.05, 0, "AFR"),
+    0x20: (0.0039062, 0, ""), 0x21: (0.001, 0, "Hz"), 0x22: (1, 0, "Hz"), 0x23: (1000, 0, "Hz"),
+    0x24: (1, 0, "counts"), 0x25: (1, 0, "km"), 0x27: (0.01, 0, "g/s"), 0x28: (1, 0, "g/s"),
+    0x2B: (1, 0, "switches"), 0x2F: (0.01, 0, "%"), 0x30: (0.001526, 0, "%"), 0x31: (0.001, 0, "L"),
+    0x34: (1, 0, "min"), 0x35: (0.01, 0, "s"),
+    0x81: (1, 0, ""), 0x82: (0.1, 0, ""), 0x83: (0.01, 0, ""), 0x84: (0.001, 0, ""),
+    0x85: (0.0000305, 0, ""), 0x86: (0.000305, 0, ""), 0x8A: (0.000122, 0, "V"), 0x8B: (0.001, 0, "V"),
+    0x8C: (0.01, 0, "V"), 0x8D: (0.00390625, 0, "mA"), 0x8E: (0.001, 0, "A"), 0x90: (0.001, 0, "s"),
+    0x96: (0.1, 0, "°C"), 0x9C: (0.01, 0, "°"), 0x9D: (0.5, 0, "°"), 0xA8: (1, 0, "g/s"),
+    0xAF: (0.01, 0, "%"), 0xB0: (0.003052, 0, "%"), 0xFC: (0.01, 0, "kPa"), 0xFD: (0.001, 0, "kPa"),
+}
+NEAR_LIMIT = 0.10      # flag values within 10% of a limit
+
+
+@dataclass
+class TestResult:
+    mid: int
+    tid: int
+    uasid: int
+    value: int        # raw; signed when uasid >= 0x80
+    min: int
+    max: int
+
+    @property
+    def signed(self) -> bool:
+        return self.uasid >= 0x80
+
+    @property
+    def monitor(self) -> str:
+        return OBDMID_NAMES.get(self.mid, f"Monitor 0x{self.mid:02X}")
+
+    @property
+    def test(self) -> str:
+        if self.tid >= 0x80:
+            return f"Manufacturer test 0x{self.tid:02X}"
+        return TID_NAMES.get(self.tid, f"Test 0x{self.tid:02X}")
+
+    def _bounds(self) -> tuple[int, int]:
+        return (-32768, 32767) if self.signed else (0, 65535)
+
+    @property
+    def has_min(self) -> bool:
+        return self.min > self._bounds()[0]
+
+    @property
+    def has_max(self) -> bool:
+        return self.max < self._bounds()[1]
+
+    @property
+    def passed(self) -> bool:
+        return self.min <= self.value <= self.max
+
+    @property
+    def near_limit(self) -> bool:
+        """Inside the limits but within NEAR_LIMIT of one of them."""
+        if not self.passed:
+            return False
+        lo, _ = self._bounds()
+        if self.has_min and self.has_max:
+            span = self.max - self.min
+        elif self.has_max:
+            span = self.max - lo
+        elif self.has_min:
+            span = abs(self.min)
+        else:
+            return False
+        span = max(span, 1)
+        return ((self.has_max and self.max - self.value <= NEAR_LIMIT * span) or
+                (self.has_min and self.value - self.min <= NEAR_LIMIT * span))
+
+    @property
+    def status(self) -> str:
+        return "FAILED" if not self.passed else "near limit" if self.near_limit else "ok"
+
+    def fmt(self, raw: int) -> str:
+        scale, offset, unit = UNITS.get(self.uasid, (1, 0, f"(unit 0x{self.uasid:02X})"))
+        v = raw * scale + offset
+        decimals = 0 if scale >= 1 else min(6, math.ceil(-math.log10(scale)))
+        return f"{v:.{decimals}f} {unit}".rstrip()
+
+    @property
+    def limits(self) -> str:
+        if self.has_min and self.has_max:
+            return f"{self.fmt(self.min)} to {self.fmt(self.max)}"
+        if self.has_max:
+            return f"≤ {self.fmt(self.max)}"
+        if self.has_min:
+            return f"≥ {self.fmt(self.min)}"
+        return "no limit"
+
+
+@dataclass
+class TestResults:
+    tests: list[TestResult]
+    error: str = ""
+
+
+def _s16(hi: int, lo: int, signed: bool) -> int:
+    return int.from_bytes(bytes([hi, lo]), "big", signed=signed)
+
+
+def parse_test_records(mid: int, reply: bytes) -> list[TestResult]:
+    """Parse a 46 reply: 46 then 9-byte records (OBDMID TID UASID value min max)."""
+    out = []
+    data = reply[1:]
+    for i in range(0, len(data) - 8, 9):
+        r = data[i:i + 9]
+        if r[0] != mid:
+            continue
+        signed = r[2] >= 0x80
+        out.append(TestResult(mid, r[1], r[2], _s16(r[3], r[4], signed), _s16(r[5], r[6], signed),
+                              _s16(r[7], r[8], signed)))
+    return out
+
+
+def read_test_results(request: Callable[[bytes, float], bytes | None]) -> TestResults:
+    mids: set[int] = set()
+    for base in range(0x00, 0x100, 0x20):
+        if base and base not in mids:
+            break
+        reply = exchange(request, bytes([0x06, base]), timeout=1.0)
+        if not reply or reply[0] != 0x46 or len(reply) < 6 or reply[1] != base:
+            if base == 0:
+                reason = _nrc(reply) if reply and reply[0] == NRC else "no reply"
+                return TestResults([], f"not supported by this ECU ({reason})")
+            break
+        bits = int.from_bytes(reply[2:6], "big")
+        mids |= {base + 1 + i for i in range(32) if bits & (1 << (31 - i))}
+    tests: list[TestResult] = []
+    for mid in sorted(m for m in mids if m % 0x20):          # 0x20, 0x40... are support ranges
+        reply = exchange(request, bytes([0x06, mid]), timeout=1.0)
+        if reply and reply[0] == 0x46:
+            tests += parse_test_records(mid, reply)
+    return TestResults(tests)
+
+
+def format_test_results(r: TestResults) -> str:
+    if r.error:
+        return f"On-board test results: ({r.error})"
+    if not r.tests:
+        return "On-board test results: none reported yet (tests run during driving)"
+    failed = sum(not t.passed for t in r.tests)
+    near = sum(t.near_limit for t in r.tests)
+    lines = [f"On-board test results (mode 06): {len(r.tests)} tests, {failed} failed, {near} near a limit"]
+    monitor = None
+    for t in r.tests:
+        if t.monitor != monitor:
+            monitor = t.monitor
+            lines.append(f"  {monitor}")
+        mark = "" if t.status == "ok" else f"   <- {t.status.upper()}"
+        lines.append(f"    {t.test:42s} {t.fmt(t.value):>14s}   limits {t.limits}{mark}")
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- mode 02 freeze frame
 def _u16(d: bytes) -> int:
     return (d[0] << 8) | d[1]
@@ -326,8 +531,6 @@ def _wideband_voltage(sensor: str) -> tuple:
                       f"{_u16(d[2:]) * 8 / 65536:.3f} V")
 
 
-_SENSOR_NAMES = ["bank 1 sensor 1 (front)", "bank 1 sensor 2 (rear)", "bank 1 sensor 3", "bank 1 sensor 4",
-                 "bank 2 sensor 1", "bank 2 sensor 2", "bank 2 sensor 3", "bank 2 sensor 4"]
 
 def _o2_present(d: bytes) -> str:
     """PID 13: bit n set = O2 sensor present, bits 0-3 bank 1 sensors 1-4, bits 4-7 bank 2."""
@@ -482,6 +685,7 @@ def main() -> int:
             print(format_results(read_all(request)))
             print("\n" + format_freeze_frame(read_freeze_frame(request)))
             print("\n" + format_status(read_status(request)))
+            print("\n" + format_test_results(read_test_results(request)))
             if want_clear:
                 print("\n" + CLEAR_WARNING)
                 if input("\nType 'clear' to clear the codes: ").strip().lower() != "clear":

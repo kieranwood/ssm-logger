@@ -17,6 +17,13 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   (handy while wiggling connectors), **Space** to pause and scroll back.
 - **Fault codes**: stored, pending and permanent OBD-II codes, freeze frame, readiness
   monitors, and clearing (standard OBD-II modes 01/02/03/04/07/0A).
+- **On-board test results** (OBD mode 06): the measured value and pass/fail limits of every
+  self-test the ECU has run - catalyst, O2/A/F sensors and heaters, misfire, EVAP. Values within
+  10% of a limit are flagged: an early warning before a test fails and sets a code.
+- **Auto-capture** for intermittent faults: when a trigger fires - a rule such as total fuel trim
+  above +25% for 2 s, a new stored or pending code, or **C** for "capture now" - the data from
+  30 s before to 30 s after is saved as its own recording (`logs/…_capture.csv`), whether or not
+  you're recording. Triggers and the window are configurable (⚙ next to Auto-capture).
 - **Analysis**: rule-based checks aimed at fuel-trim and sensor faults - trims against
   coolant temperature and airflow, front A/F vs rear O2 sensor, A/F sensor response to fuel
   cuts, MAF glitches, charging voltage, misfire counts. Each finding links to the time
@@ -32,8 +39,8 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   (the failing front A/F sensor log in the screenshot above).
 - **Log live from the car** in Chrome or Edge (version 137 or newer) on a desktop computer:
   plug in the OpenPort, turn the ignition on and press **Connect to car**. Charts, markers (M),
-  pause (Space), recording to a CSV download in the desktop app's format, analysis and fault
-  codes (read and clear) all work as in the desktop app.
+  pause (Space), recording to a CSV download in the desktop app's format, auto-capture,
+  analysis, fault codes (read and clear) and on-board test results all work as in the desktop app.
 - **[Live demo](https://kieranwood.github.io/ssm-logger/?demo)**: replays the sample through an
   emulated OpenPort and ECU, so you can try live mode without a car, in any browser. (Reading
   fault codes in the demo also needs Chrome or Edge 137+.)
@@ -111,7 +118,8 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `openport.py` | Minimal OpenPort 2.0 driver over its USB serial port |
 | `defs.py` | Loads SSM parameter definitions from RomRaider's `log_defs.xml` |
 | `fetch_defs.py` | Downloads `log_defs.xml` from RomRaider into `definitions/` |
-| `dtc.py` | OBD-II codes, freeze frame and readiness monitors |
+| `dtc.py` | OBD-II codes, freeze frame, readiness monitors and on-board test results (mode 06) |
+| `capture.py` | Auto-capture triggers and saving the window around them (desktop and browser) |
 | `analyse.py` | Rule-based checks on a recording |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
 | `probe.py` | Proof-of-concept connection test |

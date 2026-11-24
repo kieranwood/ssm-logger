@@ -160,6 +160,26 @@ class EcuSource(Source):
             self._stop.wait(1.0)
 
 
+# Simulated mode 06 test results: OBDMID -> records (MID TID UASID value min max).
+DEMO_MODE06 = {
+        0x01: "01 05 10 0048 0000 0190 01 06 10 0052 0000 0190 01 81 84 0370 fc18 03e8",
+        0x21: "21 80 01 01a4 0000 02bc",
+        0x41: "41 81 14 0019 0000 0050",
+        0xA1: "a1 0b 24 0000 0000 ffff a1 0c 24 0000 0000 ffff",
+    }
+
+
+def demo_mode06(mid: int) -> bytes | None:
+    if mid % 0x20 == 0:                              # supported-MID bitmap
+        bits = 0
+        for m in [*DEMO_MODE06, 0x20, 0x40, 0x60, 0x80, 0xA0]:
+            if mid < m <= mid + 32:
+                bits |= 1 << (32 - (m - mid))
+        return bytes([0x46, mid]) + bits.to_bytes(4, "big")
+    rec = DEMO_MODE06.get(mid)
+    return bytes([0x46]) + bytes.fromhex(rec) if rec else None
+
+
 class DemoSource(Source):
     """Simulated cold start that reproduces the +35% short-term trim spikes."""
 
@@ -219,6 +239,8 @@ class DemoSource(Source):
             if pid in demo:
                 return bytes([0x41, pid]) + demo[pid]
             return None
+        if mode == 0x06 and len(payload) == 2:
+            return demo_mode06(payload[1])
         if mode in self._demo_codes:
             codes = self._demo_codes[mode]
             return bytes([mode + 0x40, len(codes)]) + b"".join(bytes(c) for c in codes)

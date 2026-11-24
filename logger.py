@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import analyse
+import capture
 import defs
 import dtc
 import recording
@@ -198,6 +200,17 @@ class DtcDialog(QtWidgets.QDialog):
         rl.addWidget(self.monitors, 2)
         self.tabs.addTab(ready, "Readiness")
 
+        tests_page = QtWidgets.QWidget()
+        tl = QtWidgets.QVBoxLayout(tests_page)
+        self.tests_label = QtWidgets.QLabel()
+        self.tests_label.setWordWrap(True)
+        tl.addWidget(self.tests_label)
+        self.tests = QtWidgets.QTreeWidget()
+        self.tests.setHeaderLabels(["Monitor / test", "Value", "Limits", "Result"])
+        self.tests.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        tl.addWidget(self.tests)
+        self.tabs.addTab(tests_page, "Test results")
+
         self.msg = QtWidgets.QLabel("")
         self.msg.setWordWrap(True)
         lay.addWidget(self.msg)
@@ -249,11 +262,40 @@ class DtcDialog(QtWidgets.QDialog):
         self.clear_btn.setEnabled(True)
 
     def read(self) -> None:
-        self._start(lambda req: (dtc.read_all(req), dtc.read_freeze_frame(req), dtc.read_status(req)),
-                    self._show, "Reading codes, freeze frame and monitor status…", 45)
+        self._start(lambda req: (dtc.read_all(req), dtc.read_freeze_frame(req), dtc.read_status(req),
+                                 dtc.read_test_results(req)),
+                    self._show, "Reading codes, freeze frame, monitor status and test results…", 60)
 
-    def _show(self, result: tuple[list[dtc.DtcResult], dtc.FreezeFrame, dtc.ObdStatus]) -> None:
-        results, ff, status = result
+    def _show_tests(self, tr: dtc.TestResults) -> None:
+        self.tests.clear()
+        failed = sum(not t.passed for t in tr.tests)
+        near = sum(t.near_limit for t in tr.tests)
+        if tr.error:
+            self.tests_label.setText(f"({tr.error})")
+        elif not tr.tests:
+            self.tests_label.setText("No test results reported yet - the ECU runs its tests while driving.")
+        else:
+            self.tests_label.setText(
+                f"The measured value and limits of each self-test the ECU has run (OBD mode 06): "
+                f"<b>{len(tr.tests)}</b> tests, <b>{failed}</b> failed, <b>{near}</b> within "
+                f"{dtc.NEAR_LIMIT:.0%} of a limit. A value close to its limit is an early warning, "
+                "before the test fails and sets a code. Manufacturer tests have no published names.")
+        colors = {"FAILED": QtGui.QColor("#e5484d"), "near limit": QtGui.QColor("#d9822b")}
+        parents: dict[str, QtWidgets.QTreeWidgetItem] = {}
+        for t in tr.tests:
+            parent = parents.get(t.monitor)
+            if parent is None:
+                parent = parents[t.monitor] = QtWidgets.QTreeWidgetItem(self.tests, [t.monitor])
+                parent.setExpanded(True)
+            item = QtWidgets.QTreeWidgetItem(parent, [t.test, t.fmt(t.value), t.limits, t.status])
+            if t.status in colors:
+                for col in range(4):
+                    item.setForeground(col, QtGui.QBrush(colors[t.status]))
+        self.tabs.setTabText(3, f"Test results ●" if failed or near else "Test results")
+
+    def _show(self, result: tuple[list[dtc.DtcResult], dtc.FreezeFrame, dtc.ObdStatus, dtc.TestResults]) -> None:
+        results, ff, status, tests = result
+        self._show_tests(tests)
         self.ff.clear()
         if ff.error:
             self.ff_label.setText(f"({ff.error})")
@@ -293,7 +335,7 @@ class DtcDialog(QtWidgets.QDialog):
             path = LOG_DIR / time.strftime("codes_%Y%m%d_%H%M%S.txt")
             path.write_text(f"ECU {self.source.ecu_id}\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                             f"{dtc.format_results(results)}\n\n{dtc.format_freeze_frame(ff)}\n\n"
-                            f"{dtc.format_status(status)}\n")
+                            f"{dtc.format_status(status)}\n\n{dtc.format_test_results(tests)}\n")
             note = f" Saved a copy to {path.name}."
         self.msg.setText(f"{total} code(s) found. Read at {time.strftime('%H:%M:%S')}.{note}")
 
@@ -418,6 +460,111 @@ class AnalyseDialog(QtWidgets.QDialog):
             self.win.show_range(f.times[0][0], f.times[-1][1] if len(f.times) <= 3 else f.times[0][1])
 
 
+def load_capture_settings() -> capture.Settings:
+    raw = QtCore.QSettings("ssm-logger", "logger").value("capture", "")
+    try:
+        return capture.Settings.from_dict(json.loads(raw)) if raw else capture.Settings()
+    except (ValueError, TypeError):
+        return capture.Settings()
+
+
+def save_capture_settings(st: capture.Settings) -> None:
+    QtCore.QSettings("ssm-logger", "logger").setValue("capture", json.dumps(st.to_dict()))
+
+
+class CaptureDialog(QtWidgets.QDialog):
+    """Edit auto-capture triggers and the capture window."""
+
+    def __init__(self, settings: capture.Settings, channel_names: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Auto-capture")
+        self.resize(720, 460)
+        self.names = channel_names
+        lay = QtWidgets.QVBoxLayout(self)
+        intro = QtWidgets.QLabel(
+            "While auto-capture is on, a trigger saves the data from <b>before</b> it fired until "
+            "<b>after</b> it, as a separate recording in logs/ (…_capture.csv) - whether or not "
+            "you are recording. <b>C</b> captures now.")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        self.table = QtWidgets.QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["On", "Channel", "", "Value", "Hold (s)"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        lay.addWidget(self.table)
+        for r in settings.rules:
+            self._add_row(r)
+        row = QtWidgets.QHBoxLayout()
+        add = QtWidgets.QPushButton("Add rule")
+        add.clicked.connect(lambda: self._add_row(capture.Rule(self.names[0] if self.names else "", ">", 0)))
+        rm = QtWidgets.QPushButton("Remove rule")
+        rm.clicked.connect(lambda: self.table.removeRow(self.table.currentRow()))
+        row.addWidget(add)
+        row.addWidget(rm)
+        row.addStretch()
+        lay.addLayout(row)
+
+        form = QtWidgets.QFormLayout()
+        self.on_code = QtWidgets.QCheckBox("New stored or pending fault code (checked every "
+                                           f"{capture.POLL_CODES_S:.0f} s)")
+        self.on_code.setChecked(settings.on_new_code)
+        form.addRow(self.on_code)
+        self.running = QtWidgets.QCheckBox("Ignore channel rules while the engine is off (below 400 rpm)")
+        self.running.setChecked(settings.running_only)
+        form.addRow(self.running)
+
+        def secs(v):
+            sp = QtWidgets.QDoubleSpinBox(minimum=1, maximum=600, decimals=0, suffix=" s")
+            sp.setValue(v)
+            return sp
+        self.before = secs(settings.before_s)
+        self.after = secs(settings.after_s)
+        form.addRow("Keep before the trigger", self.before)
+        form.addRow("Keep after the trigger", self.after)
+        lay.addLayout(form)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def _add_row(self, rule: capture.Rule) -> None:
+        r = self.table.rowCount()
+        self.table.insertRow(r)
+        on = QtWidgets.QTableWidgetItem()
+        on.setCheckState(QtCore.Qt.Checked if rule.enabled else QtCore.Qt.Unchecked)
+        self.table.setItem(r, 0, on)
+        ch = QtWidgets.QComboBox()
+        ch.setEditable(True)
+        ch.addItems(self.names)
+        ch.setCurrentText(rule.channel)
+        self.table.setCellWidget(r, 1, ch)
+        op = QtWidgets.QComboBox()
+        op.addItems([">", "<"])
+        op.setCurrentText(rule.op)
+        self.table.setCellWidget(r, 2, op)
+        val = QtWidgets.QDoubleSpinBox(minimum=-1e6, maximum=1e6, decimals=2)
+        val.setValue(rule.value)
+        self.table.setCellWidget(r, 3, val)
+        hold = QtWidgets.QDoubleSpinBox(minimum=0, maximum=600, decimals=1)
+        hold.setValue(rule.hold_s)
+        self.table.setCellWidget(r, 4, hold)
+
+    def settings(self) -> capture.Settings:
+        rules = []
+        for r in range(self.table.rowCount()):
+            rules.append(capture.Rule(
+                channel=self.table.cellWidget(r, 1).currentText().strip(),
+                op=self.table.cellWidget(r, 2).currentText(),
+                value=self.table.cellWidget(r, 3).value(),
+                hold_s=self.table.cellWidget(r, 4).value(),
+                enabled=self.table.item(r, 0).checkState() == QtCore.Qt.Checked))
+        return capture.Settings(rules=rules, on_new_code=self.on_code.isChecked(),
+                                before_s=self.before.value(), after_s=self.after.value(),
+                                running_only=self.running.isChecked())
+
+
 class MainWindow(QtWidgets.QMainWindow):
     """Charts for either a live source or a saved recording."""
 
@@ -440,6 +587,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.reviewing = not self.live
         self.pending_mark: int | None = None
         self.recorder: CsvRecorder | None = None
+        if self.live:
+            self.capture_armed = False
+            self.capturer = capture.Capturer(load_capture_settings(), [c.name for c in self.channels])
+            self._codes_future = None
+            self._codes_next = 0.0
         self.plots: dict[int, tuple[pg.PlotItem, pg.PlotDataItem, pg.InfiniteLine]] = {}
         self._bar_guard = False
         self.cursor_t: float | None = None
@@ -487,6 +639,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.pause_btn.toggled.connect(self._set_reviewing)
             tb.addWidget(self.pause_btn)
             QtGui.QShortcut(QtGui.QKeySequence("Space"), self, activated=self.pause_btn.toggle)
+            self.cap_btn = QtWidgets.QPushButton("◎ Auto-capture")
+            self.cap_btn.setCheckable(True)
+            self.cap_btn.setToolTip("Save the data around a fault automatically (settings with the ⚙ button)")
+            self.cap_btn.toggled.connect(self._arm_capture)
+            tb.addWidget(self.cap_btn)
+            cap_set = QtWidgets.QPushButton("⚙")
+            cap_set.setToolTip("Auto-capture triggers and window")
+            cap_set.clicked.connect(self._capture_settings)
+            tb.addWidget(cap_set)
+            cap_now = QtWidgets.QPushButton("Capture now (C)")
+            cap_now.clicked.connect(self._capture_now)
+            tb.addWidget(cap_now)
+            QtGui.QShortcut(QtGui.QKeySequence("C"), self, activated=self._capture_now)
             dtc_btn = QtWidgets.QPushButton("Fault codes…")
             dtc_btn.clicked.connect(lambda: DtcDialog(self.source, self).exec())
             tb.addWidget(dtc_btn)
@@ -833,17 +998,80 @@ class MainWindow(QtWidgets.QMainWindow):
             self._add_mark_line(p, t, m)
         self.statusBar().showMessage(f"Mark {m} at {t:.1f} s", 5000)
 
+    # ---------------------------------------------------------------- auto-capture
+    def _arm_capture(self, on: bool) -> None:
+        self.capture_armed = on
+        self.cap_btn.setStyleSheet("background:#2b7de9;color:white;" if on else "")
+        if on:
+            self.capturer.known_codes = None        # codes present now are not "new"
+            self._codes_next = 0.0
+            missing = self.capturer.missing_channels()
+            if missing:
+                self.statusBar().showMessage("Auto-capture: this ECU doesn't log " + ", ".join(missing)
+                                             + " - those rules are ignored", 15000)
+
+    def _capture_settings(self) -> None:
+        dlg = CaptureDialog(self.capturer.settings, [c.name for c in self.channels], self)
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            st = dlg.settings()
+            save_capture_settings(st)
+            pending, saved = self.capturer.pending, self.capturer.saved
+            self.capturer = capture.Capturer(st, [c.name for c in self.channels])
+            self.capturer.pending, self.capturer.saved = pending, saved
+
+    def _capture_now(self) -> None:
+        if not self.buf.n:
+            return
+        if self.capturer.trigger(float(self.buf.times[-1]), "manual capture"):
+            self._mark()
+        else:
+            self.statusBar().showMessage("A capture is already in progress", 5000)
+
+    def _capture_tick(self, t_now: float) -> None:
+        # poll for new fault codes on the source's thread, between reads
+        if self.capture_armed and self.capturer.settings.on_new_code:
+            fut = self._codes_future
+            if fut is not None and fut.done():
+                self._codes_future = None
+                if not fut.cancelled() and fut.exception() is None:
+                    self.capturer.codes(t_now, fut.result())
+            elif fut is None and time.monotonic() >= self._codes_next:
+                self._codes_next = time.monotonic() + capture.POLL_CODES_S
+                self._codes_future = self.source.submit(capture.poll_codes)
+        done = self.capturer.due(t_now)
+        if done:
+            t_trig, reason = done
+            when = time.time() - (t_now - t_trig)
+            LOG_DIR.mkdir(exist_ok=True)
+            path = LOG_DIR / time.strftime("ssm_%Y%m%d_%H%M%S_capture.csv", time.localtime(when))
+            text = capture.capture_csv([c.label for c in self.channels], self.source.ecu_id, self.buf.times,
+                                       [self.buf.series(i) for i in range(len(self.channels))],
+                                       t_trig, reason, self.capturer.settings,
+                                       time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(when)))
+            path.write_text(text)
+            self.statusBar().showMessage(f"Captured {reason} -> {path.name}", 20000)
+
     def _tick(self) -> None:
         samples = self.source.drain()
         for t, values in samples:
             named = dict(zip(self.param_names, values))
             row = [c.compute(named) for c in self.channels]
             self.buf.append(t, row)
+            if self.capture_armed:
+                before = self.capturer.pending
+                self.capturer.update(t, row)
+                if self.capturer.pending is not before:
+                    self._mark()
+                    self.statusBar().showMessage(f"Auto-capture triggered: {self.capturer.pending[1]}", 10000)
             if self.recorder:
                 self.recorder.write(t, row, self.pending_mark)
             self.pending_mark = None
+        if self.buf.n:
+            self._capture_tick(float(self.buf.times[-1]))
 
         rec = f"  |  REC {self.recorder.rows} rows" if self.recorder else ""
+        if self.buf.n and (self.capture_armed or self.capturer.pending):
+            rec += f"  |  Auto-capture {self.capturer.status(float(self.buf.times[-1]))}"
         paused = "  |  PAUSED" if self.reviewing else ""
         self.status_lbl.setText(f"  ECU {self.source.ecu_id}  |  {self.source.status}  |  "
                                 f"{self.source.rate_hz:.0f} samples/s{rec}{paused}")
