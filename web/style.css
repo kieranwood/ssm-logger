@@ -19,8 +19,9 @@
   --g-track: #e6e9ed;
   --g-cold: #2ea7c9;
 }
+/* Dark colours: follow the system unless the theme switch picked light or dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #111315;
     --panel: #18191b;
     --chart-bg: #131416;
@@ -42,6 +43,30 @@
     --g-cold: #4cc4e6;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #111315;
+  --panel: #18191b;
+  --chart-bg: #131416;
+  --text: #e8eaec;
+  --muted: #9ba1a6;
+  --border: #2b2f33;
+  --accent: #4e9fff;
+  --grid: rgba(255, 255, 255, 0.07);
+  --axis: #9ba1a6;
+  --hover: #212326;
+  --highlight: rgba(245, 165, 36, 0.16);
+  --mark: rgba(78, 159, 255, 0.8);
+  --compare: rgba(255, 255, 255, 0.55);
+  --problem: #ff6369;
+  --warning: #f5a524;
+  --info-c: #9ba1a6;
+  --ok: #3ecf8e;
+  --g-track: #2a2e33;
+  --g-cold: #4cc4e6;
+}
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }

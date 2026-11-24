@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SSM Log Viewer</title>
 <meta name="description" content="Log live from a Subaru ECU with a Tactrix OpenPort, or view and analyse saved SSM recordings, in the browser. Files never leave your computer.">
+<script>
+  // apply the saved theme before the page paints (app.js handles the switch)
+  try { const t = localStorage.getItem("ssm-logger.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
 <link rel="stylesheet" href="style.css?v=dev">
 </head>
@@ -52,6 +56,7 @@
         <select id="profile"><option value="auto">Automatic</option></select></label>
     </div>
   </span>
+  <button id="theme" class="btn" title="Theme: follow the system, light or dark">◐ Auto</button>
   <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
   <span id="compare-bar" hidden>
     <i id="compare-name"></i> shift <input id="compare-shift" type="number" step="0.5" value="0"> s

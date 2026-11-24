@@ -1594,7 +1594,44 @@ $("g-size").addEventListener("change", (e) => {
   requestAnimationFrame(drawGauges);
 });
 window.addEventListener("resize", () => requestAnimationFrame(drawGauges));
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => requestAnimationFrame(drawGauges));
+// ------------------------------------------------------------------ theme
+
+const THEME_KEY = "ssm-logger.theme";
+const THEMES = { auto: "◐ Auto", light: "☀ Light", dark: "☾ Dark" };
+
+function currentTheme() {
+  const t = document.documentElement.dataset.theme;
+  return t === "light" || t === "dark" ? t : "auto";
+}
+
+/** Charts and gauges read their colours when drawn, so redraw them in the new theme. */
+function repaintTheme() {
+  if (state.charts.size) rebuildCharts();
+  requestAnimationFrame(drawGauges);
+}
+
+function setTheme(t) {
+  if (t === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode: lasts this visit */ }
+  updateThemeButton();
+  repaintTheme();
+}
+
+function updateThemeButton() {
+  const t = currentTheme();
+  $("theme").textContent = THEMES[t];
+  $("theme").title = `Theme: ${t === "auto" ? "following the system" : t} - click to switch`;
+}
+
+$("theme").addEventListener("click", () => {
+  const order = ["auto", "light", "dark"];
+  setTheme(order[(order.indexOf(currentTheme()) + 1) % order.length]);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (currentTheme() === "auto") repaintTheme();
+});
+updateThemeButton();
 
 // ------------------------------------------------------------------ engine profile
 
