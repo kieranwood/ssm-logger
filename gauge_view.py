@@ -18,6 +18,7 @@ COLORS = {"text": "#e8eaec", "muted": "#9ba1a6", "track": "#2a2e33", "accent": "
           "warn": "#f5a524", "danger": "#ff6369", "cold": "#4cc4e6", "panel": "#18191b", "border": "#2b2f33"}
 SIZES = {"s": (170, 150), "m": (220, 195), "l": (320, 280)}
 SETTINGS = ("ssm-logger", "logger")
+DEFAULT_LAYOUT = "__default"
 
 
 def _c(name: str, alpha: float = 1.0) -> QtGui.QColor:
@@ -327,6 +328,8 @@ class GaugePanel(QtWidgets.QWidget):
         self.idx = 0
         self.reset_t = -math.inf
         self.play_t = 0.0
+        self.default_sel: list[str] = []
+        self.layout = ""         # a saved layout's name, DEFAULT_LAYOUT, or "" (changed since)
         self.setStyleSheet(f"GaugePanel {{ background:#111418; }} QLabel {{ color:{COLORS['muted']}; }}")
         self.setAttribute(QtCore.Qt.WA_StyledBackground)
 
@@ -348,6 +351,27 @@ class GaugePanel(QtWidgets.QWidget):
             bar.addWidget(wdg, 1 if wdg is self.slider else 0)
         if win.live:
             bar.addStretch(1)
+        lay.addLayout(bar)
+        bar = QtWidgets.QHBoxLayout()            # second row: layouts, min/max, size
+        bar.addWidget(QtWidgets.QLabel("Layout"))
+        self.layout_combo = QtWidgets.QComboBox()
+        self.layout_combo.setToolTip("Saved gauge layouts")
+        self.layout_combo.setMinimumContentsLength(12)
+        self.layout_combo.activated.connect(self._layout_chosen)
+        bar.addWidget(self.layout_combo)
+        save_btn = QtWidgets.QPushButton("Save as…")
+        save_btn.setToolTip("Save the gauges shown, their styles and the size")
+        save_btn.clicked.connect(self.save_layout)
+        bar.addWidget(save_btn)
+        self.del_btn = QtWidgets.QPushButton("Delete")
+        self.del_btn.setToolTip("Delete the selected layout")
+        self.del_btn.clicked.connect(self.delete_layout)
+        bar.addWidget(self.del_btn)
+        default_btn = QtWidgets.QPushButton("Reset to default")
+        default_btn.setToolTip("Go back to the standard gauges for this car")
+        default_btn.clicked.connect(lambda: self.apply_layout(DEFAULT_LAYOUT))
+        bar.addWidget(default_btn)
+        bar.addStretch(1)
         reset = QtWidgets.QPushButton("Reset min/max")
         reset.setToolTip("Start the min/max readings again from now")
         reset.clicked.connect(self.reset_minmax)
@@ -392,12 +416,102 @@ class GaugePanel(QtWidgets.QWidget):
         except ValueError:
             return {}
 
-    def _save(self) -> None:
+    def _save(self, custom: bool = True, layouts: dict | None = None) -> None:
+        """Remember the current gauges. custom: the user changed them, so no saved layout matches.
+        layouts: the new set of saved layouts, when one was saved or deleted."""
         p = self._prefs()
+        if custom:
+            self.layout = ""
         types = {k: v for k, v in p.get("types", {}).items() if k not in self.specs}
         types.update(self.type_of)
         QtCore.QSettings(*SETTINGS).setValue("gauges", json.dumps(
-            {"selected": self.sel, "types": types, "size": self.size.currentData()}))
+            {"selected": self.sel, "types": types, "size": self.size.currentData(),
+             "layouts": p.get("layouts", {}) if layouts is None else layouts, "layout": self.layout}))
+        self._refresh_layouts()
+
+    # ------------------------------------------------------------ saved layouts
+    def saved_layouts(self) -> dict:
+        return self._prefs().get("layouts", {})
+
+    def _refresh_layouts(self) -> None:
+        names = sorted(self.saved_layouts(), key=str.lower)
+        c = self.layout_combo
+        c.blockSignals(True)
+        c.clear()
+        if self.layout == "":
+            c.addItem("Custom (unsaved)", "")
+        c.addItem("Default", DEFAULT_LAYOUT)
+        for n in names:
+            c.addItem(n, n)
+        c.setCurrentIndex(max(0, c.findData(self.layout)))
+        c.blockSignals(False)
+        self.del_btn.setEnabled(self.layout in names)
+
+    def _layout_chosen(self, i: int) -> None:
+        key = self.layout_combo.itemData(i)
+        if key:
+            self.apply_layout(key)
+
+    def _set_size(self, key: str) -> None:
+        self.size.blockSignals(True)
+        self.size.setCurrentIndex(max(0, self.size.findData(key)))
+        self.size.blockSignals(False)
+
+    def apply_layout(self, name: str) -> None:
+        if name == DEFAULT_LAYOUT:
+            self.sel = list(self.default_sel)
+            self.type_of = {}
+            self._set_size("m")
+        else:
+            lay = self.saved_layouts().get(name)
+            if lay is None:
+                return
+            sel = [n for n in lay.get("selected", []) if n in self.specs]
+            if not sel:
+                self.win.statusBar().showMessage(f"None of the channels in the layout “{name}” are in this log.", 8000)
+                self._refresh_layouts()
+                return
+            missing = len(lay.get("selected", [])) - len(sel)
+            if missing:
+                self.win.statusBar().showMessage(f"Layout “{name}”: {missing} of its gauges aren't in this log.", 8000)
+            self.sel = sel
+            self.type_of = {k: v for k, v in lay.get("types", {}).items() if k in self.specs}
+            self._set_size(lay.get("size", "m"))
+        self.layout = name
+        self._save(custom=False)
+        self._build()
+        self.changed.emit()
+
+    def save_layout(self) -> None:
+        current = self.layout if self.layout not in ("", DEFAULT_LAYOUT) else ""
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "Save layout", "Saves the gauges shown, their styles and the size, to use with any\n"
+            "recording or live session. Using an existing name replaces that layout.\n\nName:", text=current)
+        name = name.strip()
+        if not ok or not name:
+            return
+        if name.lower() == "default":
+            QtWidgets.QMessageBox.information(self, "Save layout", "“Default” is the built-in layout; pick another name.")
+            return
+        layouts = self.saved_layouts()
+        layouts[name] = {"selected": list(self.sel), "types": dict(self.type_of), "size": self.size.currentData()}
+        self.layout = name
+        self._save(custom=False, layouts=layouts)
+        self.win.statusBar().showMessage(f"Saved the layout “{name}”.", 6000)
+
+    def delete_layout(self) -> None:
+        name = self.layout
+        layouts = self.saved_layouts()
+        if name not in layouts:
+            return
+        if QtWidgets.QMessageBox.question(
+                self, "Delete layout", f"Delete the layout “{name}”? The gauges on screen stay as they are.") \
+                != QtWidgets.QMessageBox.Yes:
+            return
+        del layouts[name]
+        self.layout = ""
+        self._save(custom=False, layouts=layouts)
+        self.win.statusBar().showMessage(f"Deleted the layout “{name}”.", 6000)
 
     def load(self, profile, fresh: bool = True) -> None:
         """(Re)load specs for the window's channels; fresh also restores the saved selection."""
@@ -405,15 +519,21 @@ class GaugePanel(QtWidgets.QWidget):
         t, series = w.data_snapshot()
         info = gauges.all_specs([(c.name, c.units, c.is_switch) for c in w.channels], profile, series)
         self.specs, self.types = info["specs"], info["types"]
+        self.default_sel = list(info["selection"])
         if fresh:
             prefs = self._prefs()
+            layouts = prefs.get("layouts", {})
+            self.layout = (DEFAULT_LAYOUT if "selected" not in prefs
+                           else prefs.get("layout") if prefs.get("layout") == DEFAULT_LAYOUT
+                           or prefs.get("layout") in layouts else "")
             saved = [n for n in prefs.get("selected", []) if n in self.specs]
-            self.sel = saved or info["selection"]
+            self.sel = saved or list(info["selection"])
             self.type_of = {k: v for k, v in prefs.get("types", {}).items() if k in self.specs}
             self.size.blockSignals(True)
             self.size.setCurrentIndex(max(0, self.size.findData(prefs.get("size", "m"))))
             self.size.blockSignals(False)
             self.idx, self.reset_t = 0, -math.inf
+        self._refresh_layouts()
         self._build()
 
     def _build(self) -> None:

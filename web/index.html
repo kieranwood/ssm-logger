@@ -100,6 +100,10 @@
       </span>
       <span class="g-live">Newest values</span>
       <span class="spacer"></span>
+      <label class="g-layout">Layout <select id="g-layout" title="Saved gauge layouts"></select></label>
+      <button id="g-layout-save" class="btn small" title="Save the gauges shown, their styles and the size">Save as…</button>
+      <button id="g-layout-del" class="btn small" title="Delete the selected layout" disabled>Delete</button>
+      <button id="g-layout-reset" class="btn small" title="Go back to the standard gauges for this car">Reset to default</button>
       <button id="g-reset" class="btn small" title="Start the min/max readings again from now">Reset min/max</button>
       <label class="g-size">Size <select id="g-size">
         <option value="s">Small</option><option value="m" selected>Medium</option><option value="l">Large</option>
@@ -214,6 +218,17 @@
     <button id="readiness-check" class="btn">Check now</button>
     <span class="spacer"></span>
     <button id="readiness-close" class="btn">Close</button>
+  </div>
+</dialog>
+
+<dialog id="layout-dialog">
+  <div class="dialog-head"><b id="layout-title">Save layout</b></div>
+  <p id="layout-msg" class="sub"></p>
+  <p id="layout-name-row"><label>Name <input id="layout-name" type="text" maxlength="40" autocomplete="off"></label></p>
+  <div class="dialog-buttons">
+    <span class="spacer"></span>
+    <button id="layout-cancel" class="btn">Cancel</button>
+    <button id="layout-ok" class="btn primary">Save</button>
   </div>
 </dialog>
 

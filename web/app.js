@@ -1271,20 +1271,128 @@ const GAUGE_KEY = "ssm-logger.gauges";
 const gv = {
   specs: {}, types: [], sel: [], typeOf: {}, index: new Map(), tiles: new Map(), cache: new Map(),
   idx: 0, resetT: -Infinity, playing: false, playT: 0, lastFrame: 0,
+  defaultSel: [], layout: "",      // layout: a saved layout's name, DEFAULT_LAYOUT, or "" (changed since)
 };
+const DEFAULT_LAYOUT = "__default";
 
 function loadGaugePrefs() {
   try { return JSON.parse(localStorage.getItem(GAUGE_KEY) || "{}"); } catch { return {}; }
 }
 
-function saveGaugePrefs() {
+/** Remember the current gauges. custom: the user changed them, so no saved layout matches now.
+ *  layouts: the new set of saved layouts, when one was saved or deleted. */
+function saveGaugePrefs(custom = true, layouts = undefined) {
   const p = loadGaugePrefs();
+  if (custom) gv.layout = "";
   const types = { ...(p.types || {}) };
   for (const n of gv.index.keys()) delete types[n];          // replace this log's overrides
   Object.assign(types, gv.typeOf);
-  const next = { selected: gv.sel.slice(), types, size: $("g-size").value };
+  const next = { selected: gv.sel.slice(), types, size: $("g-size").value,
+                 layouts: layouts ?? p.layouts ?? {}, layout: gv.layout };
   try { localStorage.setItem(GAUGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  refreshLayoutSelect();
 }
+
+// ---------------------------------------------------------------- saved layouts
+
+function savedLayouts() {
+  return loadGaugePrefs().layouts || {};
+}
+
+function refreshLayoutSelect() {
+  const sel = $("g-layout");
+  const names = Object.keys(savedLayouts()).sort((a, b) => a.localeCompare(b));
+  sel.replaceChildren();
+  if (gv.layout === "") sel.append(new Option("Custom (unsaved)", ""));
+  sel.append(new Option("Default", DEFAULT_LAYOUT));
+  for (const n of names) sel.append(new Option(n, n));
+  sel.value = gv.layout;
+  $("g-layout-del").disabled = !names.includes(gv.layout);
+}
+
+function applyLayout(name) {
+  if (name === DEFAULT_LAYOUT) {
+    gv.sel = gv.defaultSel.slice();
+    gv.typeOf = {};
+    $("g-size").value = "m";
+  } else {
+    const L = savedLayouts()[name];
+    if (!L) return;
+    const sel = (L.selected || []).filter((n) => gv.index.has(n));
+    if (!sel.length) {
+      setStatus(`None of the channels in the layout “${name}” are in this log.`, true);
+      refreshLayoutSelect();
+      return;
+    }
+    gv.sel = sel;
+    gv.typeOf = {};
+    for (const [n, t] of Object.entries(L.types || {})) if (gv.index.has(n)) gv.typeOf[n] = t;
+    $("g-size").value = L.size || "m";
+    const missing = (L.selected || []).length - sel.length;
+    if (missing) setStatus(`Layout “${name}”: ${missing} of its gauges aren't in this log.`);
+  }
+  gv.layout = name;
+  $("gauge-grid").className = `size-${$("g-size").value}`;
+  saveGaugePrefs(false);
+  buildGaugeTiles();
+  refreshChannelList();
+}
+
+let layoutAction = null;
+function openLayoutDialog(mode) {
+  layoutAction = mode;
+  const save = mode === "save";
+  $("layout-title").textContent = save ? "Save layout" : "Delete layout";
+  $("layout-name-row").hidden = !save;
+  $("layout-ok").textContent = save ? "Save" : "Delete";
+  $("layout-ok").className = save ? "btn primary" : "btn danger";
+  if (save) {
+    const current = gv.layout && gv.layout !== DEFAULT_LAYOUT ? gv.layout : "";
+    $("layout-name").value = current;
+    describeLayoutName();
+  } else {
+    $("layout-msg").textContent = `Delete the layout “${gv.layout}”? The gauges on screen stay as they are.`;
+  }
+  $("layout-dialog").showModal();
+  if (save) $("layout-name").select();
+}
+
+function describeLayoutName() {
+  const name = $("layout-name").value.trim();
+  const reserved = name.toLowerCase() === "default";
+  $("layout-ok").disabled = !name || reserved;
+  $("layout-msg").textContent = reserved ? "“Default” is the built-in layout; pick another name."
+    : name in savedLayouts() ? `Replaces the saved layout “${name}”.`
+    : "Saves the gauges shown, their styles and the size, to use with any recording or live session.";
+}
+
+function confirmLayout() {
+  const layouts = savedLayouts();
+  if (layoutAction === "save") {
+    const name = $("layout-name").value.trim();
+    if (!name || name.toLowerCase() === "default") return;
+    layouts[name] = { selected: gv.sel.slice(), types: { ...gv.typeOf }, size: $("g-size").value };
+    gv.layout = name;
+    saveGaugePrefs(false, layouts);
+    setStatus(`Saved the layout “${name}”.`);
+  } else {
+    const name = gv.layout;
+    delete layouts[name];
+    gv.layout = "";
+    saveGaugePrefs(false, layouts);
+    setStatus(`Deleted the layout “${name}”.`);
+  }
+  $("layout-dialog").close();
+}
+
+$("g-layout").addEventListener("change", (e) => { if (e.target.value) applyLayout(e.target.value); });
+$("g-layout-save").addEventListener("click", () => openLayoutDialog("save"));
+$("g-layout-del").addEventListener("click", () => openLayoutDialog("delete"));
+$("g-layout-reset").addEventListener("click", () => applyLayout(DEFAULT_LAYOUT));
+$("layout-name").addEventListener("input", describeLayoutName);
+$("layout-name").addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("layout-ok").disabled) confirmLayout(); });
+$("layout-ok").addEventListener("click", confirmLayout);
+$("layout-cancel").addEventListener("click", () => $("layout-dialog").close());
 
 /** Load the gauge specs for the current recording; fresh=false keeps the time position. */
 function setupGauges(fresh = true) {
@@ -1295,10 +1403,13 @@ function setupGauges(fresh = true) {
   gv.specs = res.specs;
   gv.types = res.types;
   gv.index = new Map(rec.channels.map((c, i) => [c.name, i]));
+  gv.defaultSel = res.selection.slice();
   if (fresh) {
     const prefs = loadGaugePrefs();
+    gv.layout = !prefs.selected ? DEFAULT_LAYOUT
+      : prefs.layout === DEFAULT_LAYOUT || (prefs.layout && prefs.layout in (prefs.layouts || {})) ? prefs.layout : "";
     const saved = (prefs.selected || []).filter((n) => gv.index.has(n));
-    gv.sel = saved.length ? saved : res.selection;
+    gv.sel = saved.length ? saved : res.selection.slice();
     gv.typeOf = {};
     for (const [n, t] of Object.entries(prefs.types || {})) if (gv.index.has(n)) gv.typeOf[n] = t;
     if (prefs.size) $("g-size").value = prefs.size;
@@ -1308,6 +1419,7 @@ function setupGauges(fresh = true) {
     stopPlay();
   }
   gv.cache.clear();
+  refreshLayoutSelect();
   buildGaugeTiles();
 }
 
