@@ -1,0 +1,132 @@
+; OpenPort 2.0 standalone logging config
+; 2012 Subaru Forester (ECU 7152345007) - SSM over CAN
+;
+; Logs the whole time the engine is running:
+;   starts when engine speed rises above 400 rpm, stops when it falls below 100 rpm.
+; Each engine start creates a new logNNNN.csv on this card.
+; Every channel below is one this ECU reports as supported.
+; Names must not contain spaces (the OpenPort cuts them at the first space).
+
+type = ssmcan
+
+;---------------- engine / driving ----------------
+paramname = RPM
+paramid = 0x0E
+databits = 16
+scalingrpn = x,4,/
+
+paramname = Speed_kmh
+paramid = 0x10
+databits = 8
+
+paramname = Throttle_pct
+paramid = 0x15
+databits = 8
+scalingrpn = x,100,*,255,/
+
+paramname = Pedal_pct
+paramid = 0x29
+databits = 8
+scalingrpn = x,100,*,256,/
+
+paramname = Load_pct
+paramid = 0x07
+databits = 8
+scalingrpn = x,100,*,255,/
+
+paramname = MAF_gs
+paramid = 0x13
+databits = 16
+scalingrpn = x,100,/
+
+paramname = MAP_psi
+paramid = 0x0D
+databits = 8
+scalingrpn = x,37,*,255,/
+
+paramname = Atmo_psi
+paramid = 0x23
+databits = 8
+scalingrpn = x,37,*,255,/
+
+paramname = Coolant_C
+paramid = 0x08
+databits = 8
+scalingrpn = x,40,-
+
+paramname = IAT_C
+paramid = 0x12
+databits = 8
+scalingrpn = x,40,-
+
+paramname = Timing_deg
+paramid = 0x11
+databits = 8
+scalingrpn = x,128,-,2,/
+
+paramname = IPW_ms
+paramid = 0x20
+databits = 8
+scalingrpn = x,256,*,1000,/
+
+;---------------- fuel trims and mixture ----------------
+paramname = AF_Correction_1_pct
+paramid = 0x09
+databits = 8
+scalingrpn = x,128,-,100,*,128,/
+
+paramname = AF_Learning_1_pct
+paramid = 0x0A
+databits = 8
+scalingrpn = x,128,-,100,*,128,/
+
+paramname = AF_Sensor_1_AFR
+paramid = 0x46
+databits = 8
+scalingrpn = x,128,/,14.7,*
+
+paramname = Rear_O2_V
+paramid = 0x18
+databits = 16
+scalingrpn = x,5,*,1000,/
+
+paramname = AF_Correction_3_pct
+paramid = 0xD0
+databits = 8
+scalingrpn = x,128,-,100,*,128,/
+
+paramname = AF1_Current_mA
+paramid = 0x42
+databits = 8
+scalingrpn = x,128,-,125,*,1000,/
+
+paramname = AF1_Resistance
+paramid = 0x44
+databits = 8
+
+;---------------- electrical ----------------
+paramname = MAF_Sensor_V
+paramid = 0x1D
+databits = 8
+scalingrpn = x,2,*,100,/
+
+paramname = Battery_V
+paramid = 0x1C
+databits = 8
+scalingrpn = x,8,*,100,/
+
+paramname = Alternator_Duty
+paramid = 0x3A
+databits = 8
+
+paramname = CPC_Purge_Duty_pct
+paramid = 0x32
+databits = 8
+scalingrpn = x,100,*,255,/
+
+;---------------- start/stop with the engine ----------------
+conditionrpn = RPM,400,>
+action = start
+
+conditionrpn = RPM,100,<
+action = stop
