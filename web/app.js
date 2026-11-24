@@ -639,7 +639,9 @@ async function startDemo() {
       fetch(SAMPLE_URL).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text(); }),
     ]);
     const ecu = new DemoEcu(JSON.parse(py.globals.get("param_table")()), parseSampleCsv(csv));
-    startLive(new DemoSerialPort(ecu), { demo: true });
+    const port = new DemoSerialPort(ecu);
+    port.onCable = onCableEvent;
+    startLive(port, { demo: true });
   } catch (e) {
     setStatus(`Could not start the demo: ${e.message}`, true);
   }
@@ -647,6 +649,22 @@ async function startDemo() {
 
 function disconnect() {
   state.session?.stop();
+}
+
+/** The cable was unplugged or plugged back in: pause logging, then carry on without the port chooser. */
+function onCableEvent(type, port) {
+  const s = state.session;
+  if (!s) return;
+  if (type === "disconnect" && port === s.port) {
+    s.portLost();
+  } else if (type === "connect" && s.cableGone && s.matches(port)) {
+    setStatus("Cable is back - reconnecting…");
+    s.portFound(port);
+  }
+}
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("disconnect", (e) => onCableEvent("disconnect", e.target));
+  navigator.serial.addEventListener("connect", (e) => onCableEvent("connect", e.target));
 }
 
 function toggleRecording() {

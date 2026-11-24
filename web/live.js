@@ -64,6 +64,30 @@ class LiveSession {
     this.rate = 0;
     this.decodePy = py.globals.get("decode");
     this.t0 = performance.now();
+    this.portInfo = port.getInfo?.() ?? {};
+    this.cableGone = false;        // unplugged: wait for it to come back instead of retrying
+    this.wakeCable = null;
+    this.lastOp = null;            // the last OpenPort, closed again before each retry
+  }
+
+  /** Is this port the cable we were using (after it was unplugged and plugged back in)? */
+  matches(port) {
+    if (port === this.port) return true;
+    const a = this.portInfo, b = port.getInfo?.() ?? {};
+    return a.usbVendorId != null && a.usbVendorId === b.usbVendorId && a.usbProductId === b.usbProductId;
+  }
+
+  /** The cable was unplugged (navigator.serial "disconnect"). */
+  portLost() {
+    this.cableGone = true;
+  }
+
+  /** A matching cable was plugged in (navigator.serial "connect"). */
+  portFound(port) {
+    if (!this.cableGone) return;
+    this.port = port;
+    this.cableGone = false;
+    this.wakeCable?.();
   }
 
   /** Run fn(request) on the polling loop between reads; request(payload, timeoutSec) -> Uint8Array|null. */
@@ -83,9 +107,10 @@ class LiveSession {
     }
   }
 
-  async _connect() {
-    this.onStatus("Connecting to OpenPort…");
+  async _connect(lastError) {
+    this.onStatus(lastError ? `Retrying… last error: ${lastError}` : "Connecting to OpenPort…", !!lastError);
     const op = new OpenPort(this.port);
+    this.lastOp = op;
     try {
       const firmware = await op.open();
       const volts = await op.batteryVoltage();
@@ -135,13 +160,36 @@ class LiveSession {
   }
 
   async run() {
+    let lastError = null;
     while (!this.stopped) {
+      if (this.cableGone) {
+        this.onStatus("Cable disconnected - check it's plugged into the car's OBD port and the computer. " +
+                      "Logging carries on when it's back.", true);
+        await new Promise((r) => { this.wakeCable = r; });
+        this.wakeCable = null;
+        lastError = null;
+        continue;
+      }
+      // A failed attempt may not have been able to release the port; try again before reopening.
+      if (this.lastOp && !(await this.lastOp.close())) {
+        lastError = "the serial port is still open from the last attempt";
+      }
       let op;
       try {
-        op = await this._connect();
+        op = await this._connect(lastError);
+        lastError = null;
       } catch (e) {
         if (this.stopped) break;
-        this.onStatus(`Not connected: ${e.message} - retrying`, true);
+        if (this.port.connected === false) {          // the cable went away mid-attempt
+          this.cableGone = true;
+          continue;
+        }
+        const msg = e.message || String(e);
+        lastError = /already open/i.test(msg)
+          ? (lastError ? `${lastError}. ` : "") + "The port is still open from an earlier attempt - unplug the " +
+            "cable from the computer and plug it back in, or reload the page"
+          : msg;
+        this.onStatus(`Not connected: ${lastError} - retrying`, true);
         await sleep(2000);
         continue;
       }
@@ -167,7 +215,9 @@ class LiveSession {
           }
         }
       } catch (e) {
-        if (!this.stopped) this.onStatus(`Connection lost: ${e.message} - retrying`, true);
+        if (this.port.connected === false) this.cableGone = true;
+        lastError = e.message;
+        if (!this.stopped && !this.cableGone) this.onStatus(`Connection lost: ${e.message} - retrying`, true);
         this.rate = 0;
       } finally {
         this.op = null;
@@ -180,6 +230,7 @@ class LiveSession {
 
   stop() {
     this.stopped = true;
+    this.wakeCable?.();
   }
 }
 

@@ -25,6 +25,8 @@ const OP = {
 
 class OpenPortError extends Error {}
 
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function describeOpenPortError(line) {
   const code = Number(line.split(/\s+/)[1]);
   return Number.isNaN(code) ? line : `J2534 error ${code}: ${OP.ERRORS[code] || "unknown"}`;
@@ -50,6 +52,7 @@ class OpenPort {
     this.firmware = "";
     this.channelOpen = false;
     this.closed = false;
+    this.portClosed = false;     // the serial port itself was closed (close() can fail)
     this.readError = null;
   }
 
@@ -217,19 +220,30 @@ class OpenPort {
     return this.recv(timeoutMs);
   }
 
+  /** Say goodbye to the cable if it's still there, then release and close the serial port.
+   *  Safe to call again if a previous close couldn't close the port. Returns true once closed. */
   async close() {
-    if (this.closed) return;
-    try {
+    if (this.portClosed) return true;
+    const limit = (p, ms) => Promise.race([p, sleepMs(ms)]);   // a dead cable mustn't hang us
+    if (!this.closed && !this.readError && this.writer) {
       if (this.channelOpen) {
-        try { await this.command(`atc${OP.ISO15765}\r\n`, { timeoutMs: 1000 }); } catch { /* ignore */ }
+        try { await limit(this.command(`atc${OP.ISO15765}\r\n`, { timeoutMs: 500 }), 800); } catch { /* ignore */ }
       }
-      try { await this._write(encodeText("atz\r\n")); } catch { /* ignore */ }
-    } finally {
-      this.closed = true;
-      try { await this.reader?.cancel(); } catch { /* ignore */ }
-      try { this.reader?.releaseLock(); } catch { /* ignore */ }
-      try { this.writer?.releaseLock(); } catch { /* ignore */ }
-      try { await this.port.close(); } catch { /* ignore */ }
+      try { await limit(this._write(encodeText("atz\r\n")), 300); } catch { /* ignore */ }
     }
+    this.closed = true;
+    try { await limit(this.reader?.cancel(), 500); } catch { /* ignore */ }
+    if (this.readLoop) await limit(this.readLoop, 500);
+    try { this.reader?.releaseLock(); } catch { /* ignore */ }
+    try { await limit(this.writer?.abort(), 300); } catch { /* ignore */ }
+    try { this.writer?.releaseLock(); } catch { /* ignore */ }
+    try {
+      await this.port.close();          // always: the port stays open even once its streams are gone
+      this.portClosed = true;
+    } catch (e) {
+      if (/already closed|not open/i.test(e.message)) this.portClosed = true;
+      else console.warn("Could not close the serial port:", e);
+    }
+    return this.portClosed;
   }
 }

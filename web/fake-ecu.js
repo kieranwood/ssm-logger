@@ -140,21 +140,45 @@ class DemoSerialPort {
     this.ecu = ecu;
     this.readable = null;
     this.writable = null;
+    this.connected = true;
+    this.onCable = null;          // (type, port) - set by the app, like navigator.serial's events
   }
 
   getInfo() {
     return { demo: true };
   }
 
+  // Same rules as a real Web Serial port, so the app's error handling can be tested on the demo.
   async open() {
+    if (!this.connected) throw new DOMException("Failed to open serial port.", "NetworkError");
+    if (this.isOpen) throw new DOMException("Failed to execute 'open' on 'SerialPort': The port is already open.", "InvalidStateError");
+    this.isOpen = true;
     this.inbuf = [];
     this.pending = null;          // {n, kind} raw bytes expected after a command line
     this.readable = new ReadableStream({ start: (c) => { this.ctrl = c; } });
-    this.writable = new WritableStream({ write: (chunk) => this._input(chunk) });
+    this.writable = new WritableStream({ write: (chunk) => { if (!this.connected) throw new DOMException("The device has been lost.", "NetworkError"); this._input(chunk); } });
   }
 
   async close() {
+    if (!this.isOpen) throw new DOMException("The port is already closed.", "InvalidStateError");
+    if (this.readable?.locked || this.writable?.locked) throw new DOMException("Cannot close a port with locked streams.", "InvalidStateError");
     try { this.ctrl.close(); } catch { /* already closed or cancelled */ }
+    this.readable = this.writable = null;
+    this.isOpen = false;
+  }
+
+  /** Test hooks: pull the cable out / plug it back in. */
+  unplug() {
+    this.connected = false;
+    try { this.ctrl?.error(new DOMException("The device has been lost.", "NetworkError")); } catch { /* closed */ }
+    this.onCable?.("disconnect", this);
+  }
+
+  replug() {
+    this.connected = true;
+    this.readable = this.writable = null;     // a real replug is a fresh, closed port
+    this.isOpen = false;
+    this.onCable?.("connect", this);
   }
 
   _out(text) {
