@@ -13,6 +13,7 @@ idle airflow, boost...) come from an engine profile, see profiles.py.
 
 from __future__ import annotations
 
+import math
 import sys
 from dataclasses import dataclass, field
 
@@ -104,6 +105,58 @@ def _states(L: Log, P: Profile = profiles.DEFAULT) -> dict[str, np.ndarray]:
         warm, cold = true, np.zeros(n, bool)
     idle = running & ((L["Vehicle Speed"] < 2) if L.has("Vehicle Speed") else (L["Engine Speed"] < 1000))
     return dict(running=running, fuel_cut=fuel_cut, closed=closed, warm=warm, cold=cold, idle=idle)
+
+
+CUT_MIN_S = 0.4        # fuel cuts shorter than this aren't judged
+AFR_FAIL, AFR_GOOD = 16.0, 18.0   # peak AFR after a cut: below FAIL barely reacted, GOOD is healthy
+
+
+def fuel_cut_response(L: Log, S) -> list[tuple[float, float, float, float]]:
+    """How the front A/F sensor reacted to each fuel cut of at least CUT_MIN_S:
+    (start, end, peak AFR, seconds until it passed 16 AFR or inf). The sensor lags, so its lean
+    swing is looked for up to 2 s after injection resumes."""
+    afr = L["Air/Fuel Sensor #1 AFR"]
+    out = []
+    for a, b in L.runs(S["fuel_cut"], min_s=CUT_MIN_S, join_s=0.3):
+        win = (L.t >= a) & (L.t <= b + 2.0)
+        over = np.flatnonzero(win & (afr > AFR_FAIL))
+        out.append((a, b, float(np.nanmax(afr[win])), float(L.t[over[0]] - a) if len(over) else math.inf))
+    return out
+
+
+def afr_response_findings(L: Log, S) -> list[Finding]:
+    """Front A/F sensor response to fuel cuts, judged on the weakest cut. Shared by Analyse and the
+    guided A/F sensor test so both reach the same verdict. Empty when there were no long-enough cuts."""
+    resp = fuel_cut_response(L, S)
+    if not resp:
+        return []
+    cuts = [(a, b) for a, b, _, _ in resp]
+    peaks = [p for _, _, p, _ in resp]
+    weak = [(a, b) for a, b, p, _ in resp if p < AFR_GOOD]
+    worst = min(peaks)
+    wa = resp[peaks.index(worst)][0]
+    detail = (f"{len(cuts)} fuel cut(s) of {CUT_MIN_S:g} s or more at {_fmt_ranges(cuts)}; the weakest "
+              f"(at {wa:.0f} s) peaked at {worst:.1f} AFR, the best at {max(peaks):.1f}. A healthy wideband "
+              f"sensor swings well lean (past {AFR_GOOD:g} AFR) within about a second of every cut.")
+    out = []
+    if worst < AFR_FAIL:
+        out.append(Finding(PROBLEM, f"Front A/F sensor barely reacted to a fuel cut (peak {worst:.1f} AFR)",
+                           detail + " Sensor, heater or wiring.", weak))
+    elif worst < AFR_GOOD:
+        out.append(Finding(WARNING, f"Front A/F sensor reacted weakly to a fuel cut (peak {worst:.1f} AFR)",
+                           detail, weak))
+    else:
+        out.append(Finding(OK, f"Front A/F sensor swung to {worst:.1f} AFR or more in every fuel cut", detail, cuts))
+    slow = max(d for _, _, _, d in resp)
+    if math.isfinite(slow):                      # a cut that never got lean is already reported above
+        if slow > 2.0:
+            out.append(Finding(PROBLEM, f"Slow A/F sensor response: {slow:.1f} s to pass {AFR_FAIL:g} AFR", detail, cuts))
+        elif slow > 1.0:
+            out.append(Finding(WARNING, f"Sluggish A/F sensor response: {slow:.1f} s to pass {AFR_FAIL:g} AFR",
+                               detail, cuts))
+        else:
+            out.append(Finding(OK, f"Quick A/F sensor response: {slow:.2f} s to pass {AFR_FAIL:g} AFR", detail, cuts))
+    return out
 
 
 def check_trims(L: Log, S, P: Profile) -> list[Finding]:
@@ -205,22 +258,9 @@ def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
         afr = L["Air/Fuel Sensor #1 AFR"]
         run = S["running"]
         spread = np.nanpercentile(afr[run], 99) - np.nanpercentile(afr[run], 1) if run.any() else 0
-        cut = S["fuel_cut"]
-        cuts = L.runs(cut, join_s=0.5)
-        if L.duration(cut) >= 1.5:
-            # the sensor lags: its lean swing peaks just after injection resumes
-            after = np.zeros_like(cut)
-            for a, b in cuts:
-                after |= (L.t >= a) & (L.t <= b + 2.0)
-            peak = float(np.nanmax(afr[after]))
-            if peak < 16:
-                out.append(Finding(WARNING, "Front A/F sensor barely reacts to fuel cuts",
-                                   f"Across {len(cuts)} fuel cut(s) it peaked at only {peak:.1f} AFR; a "
-                                   "working sensor swings well lean (>18) when the cut lasts a second or "
-                                   "more. Sensor, heater or wiring - or just very short cuts.", cuts))
-            else:
-                out.append(Finding(OK, "Front A/F sensor responds to fuel cuts",
-                                   f"Swung to {peak:.1f} AFR around the fuel cuts.", cuts))
+        response = afr_response_findings(L, S)
+        if response:
+            out += response
         elif spread < 0.3:
             out.append(Finding(INFO, "Front A/F sensor reading hardly moves in this log",
                                f"It spans only {spread:.2f} AFR. In closed loop the ECU holds it on target, so "

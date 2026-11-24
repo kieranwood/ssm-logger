@@ -16,7 +16,8 @@ from typing import Callable
 import numpy as np
 
 import profiles
-from analyse import INFO, OK, PROBLEM, WARNING, Finding, Log, _fmt_ranges, _states, check_boost
+from analyse import (INFO, OK, PROBLEM, WARNING, Finding, Log, _states, afr_response_findings,
+                     check_boost, fuel_cut_response)
 from profiles import Profile
 
 
@@ -93,36 +94,13 @@ def _thermostat(L: Log, P: Profile) -> list[Finding]:
 # ---------------------------------------------------------------- front A/F sensor response
 def _afr_response(L: Log, P: Profile) -> list[Finding]:
     S = _states(L, P)
-    afr = L["Air/Fuel Sensor #1 AFR"]
-    cuts = L.runs(S["fuel_cut"], min_s=0.4, join_s=0.3)
-    if not cuts:
+    resp = fuel_cut_response(L, S)
+    if not resp:
         return [Finding(INFO, "No fuel cut found",
                         "Lift your foot fully off the pedal at speed (in gear, above about 2000 rpm) for "
                         "3 seconds or more, then try again.")]
-    out = []
-    peaks, delays = [], []
-    for a, b in cuts:
-        win = (L.t >= a) & (L.t <= b + 2.0)
-        peak = float(np.nanmax(afr[win]))
-        peaks.append(peak)
-        over = np.flatnonzero(win & (afr > 16))
-        delays.append(L.t[over[0]] - a if len(over) else np.inf)
-    worst_peak, worst_delay = min(peaks), max(delays)
-    detail = (f"{len(cuts)} fuel cut(s) at {_fmt_ranges(cuts)}. A healthy wideband sensor swings well "
-              f"lean (past 18 AFR) within about a second of the injectors switching off.")
-    if worst_peak < 16:
-        out.append(Finding(PROBLEM, f"Front A/F sensor barely reacted (peak {worst_peak:.1f} AFR)", detail, cuts))
-    elif worst_peak < 18:
-        out.append(Finding(WARNING, f"Front A/F sensor reacted weakly (peak {worst_peak:.1f} AFR)", detail, cuts))
-    else:
-        out.append(Finding(OK, f"Front A/F sensor swung to {worst_peak:.1f} AFR or more", detail, cuts))
-    if np.isfinite(worst_delay):
-        if worst_delay > 2.0:
-            out.append(Finding(PROBLEM, f"Slow response: {worst_delay:.1f} s to pass 16 AFR", detail, cuts))
-        elif worst_delay > 1.0:
-            out.append(Finding(WARNING, f"Sluggish response: {worst_delay:.1f} s to pass 16 AFR", detail, cuts))
-        else:
-            out.append(Finding(OK, f"Quick response: {worst_delay:.2f} s to pass 16 AFR", detail, cuts))
+    out = afr_response_findings(L, S)
+    cuts = [(a, b) for a, b, _, _ in resp]
     if L.has("Rear O2 Sensor"):
         lows = [float(np.nanmin(L["Rear O2 Sensor"][(L.t >= a) & (L.t <= b + 2.0)])) for a, b in cuts]
         if max(lows) > 0.3:
