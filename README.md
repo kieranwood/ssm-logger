@@ -1,7 +1,7 @@
 # ssm-logger
 
 A live data logger, fault-code reader and fuel-trim analyser for Subaru ECUs that speak
-SSM over CAN, using a **Tactrix OpenPort 2.0** cable on macOS. Written for and tested on a
+SSM over CAN, using a **Tactrix OpenPort 2.0** cable on macOS (Linux should work but is untested). Written for and tested on a
 2012 Forester (FB25, ECU `7152345007`).
 
 ## Features
@@ -19,7 +19,7 @@ SSM over CAN, using a **Tactrix OpenPort 2.0** cable on macOS. Written for and t
 
 ## Requirements
 
-- macOS with Python 3.10+
+- Python 3.10+ on macOS or Linux
 - Tactrix OpenPort 2.0 (shows up as a USB serial device; no J2534 driver needed)
 - RomRaider's logger definitions (`log_defs.xml`) for the parameter list, addresses and
   scaling - downloaded by `fetch_defs.py`, see below
@@ -46,10 +46,22 @@ or pass `--defs` to `logger.py`. An existing RomRaider checkout at
 
 .venv/bin/python dtc.py                     # read codes, freeze frame, readiness
 .venv/bin/python dtc.py --clear             # clear codes (asks first)
+.venv/bin/python dtc.py --port /dev/ttyACM0  # any command: name the cable if auto-detect fails
 
 .venv/bin/python analyse.py logs/ssm_....csv
 .venv/bin/python probe.py [--debug]         # minimal connection test
 ```
+
+## Platforms
+
+| Platform | Status |
+|---|---|
+| macOS | Tested with a real car. |
+| Linux | Should work, untested on a car. The cable usually appears as `/dev/ttyACM0`. If you get "permission denied", add yourself to the serial group and log in again: `sudo usermod -aG dialout $USER` (`uucp` on Arch). |
+| Windows | Not supported for talking to the car: Tactrix's Windows driver normally takes over the cable and expects programs to use its J2534 interface. Demo mode, log review and `analyse.py` work. |
+
+The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmodem*` (macOS) and
+`/dev/ttyACM*` (Linux). `--port` overrides it on `logger.py`, `dtc.py` and `probe.py`.
 
 ## Files
 

@@ -8,6 +8,7 @@
 Command line use (when the logger is not running):
     .venv/bin/python dtc.py            read codes
     .venv/bin/python dtc.py --clear    clear codes (asks for confirmation)
+    .venv/bin/python dtc.py --port /dev/ttyACM0   use a specific serial device
 """
 
 from __future__ import annotations
@@ -459,11 +460,17 @@ CLEAR_WARNING = (
 
 
 def main() -> int:
+    import argparse
+
     from openport import OpenPort, OpenPortError
 
-    want_clear = "--clear" in sys.argv
+    ap = argparse.ArgumentParser(description="Read (or clear) OBD-II fault codes.")
+    ap.add_argument("--clear", action="store_true", help="clear codes (asks for confirmation)")
+    ap.add_argument("--port", help="serial device (default: auto-detect the OpenPort)")
+    args = ap.parse_args()
+    want_clear = args.clear
     try:
-        with OpenPort() as op:
+        with OpenPort(args.port) as op:
             op.open()
             op.connect_can()
 

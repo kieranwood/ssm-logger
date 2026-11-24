@@ -1,6 +1,6 @@
 """Proof of concept: talk to the OpenPort 2.0 and, if a car is connected, the ECU.
 
-Usage:  .venv/bin/python probe.py [--debug]
+Usage:  .venv/bin/python probe.py [--debug] [--port DEVICE]
 """
 
 import sys
@@ -23,7 +23,8 @@ PARAMS = [
 def main() -> int:
     debug = "--debug" in sys.argv
     try:
-        op = OpenPort(debug=debug)
+        port = sys.argv[sys.argv.index("--port") + 1] if "--port" in sys.argv else None
+        op = OpenPort(port, debug=debug)
     except (OpenPortError, OSError) as e:
         print(f"Could not open the OpenPort: {e}")
         return 1

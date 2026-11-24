@@ -1,4 +1,4 @@
-"""Live Subaru SSM logger for the Tactrix OpenPort 2.0 on macOS.
+"""Live Subaru SSM logger for the Tactrix OpenPort 2.0 (macOS; Linux untested).
 
 Usage:
     .venv/bin/python logger.py                  # connect to the car
@@ -16,7 +16,7 @@ double-click one to jump to it. Also: .venv/bin/python analyse.py FILE.csv
 
 Reviewing: press Space (or Pause) to freeze the live charts and look back while
 recording carries on, or use "Open recording…" for a saved log. While reviewing:
-drag or swipe sideways to move through time, ⌘+scroll to zoom time, and the
+drag or swipe sideways to move through time, ⌘/Ctrl+scroll to zoom time, and the
 cursor line shows every channel's value in the list on the left.
 """
 
@@ -561,7 +561,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.time_bar.valueChanged.connect(self._bar_moved)
         rl.addWidget(self.time_bar)
         self.hint = QtWidgets.QLabel(
-            "  Reviewing - drag or swipe sideways to move through time, ⌘+scroll to zoom, "
+            "  Reviewing - drag or swipe sideways to move through time, ⌘/Ctrl+scroll to zoom, "
             "←/→ to step. The list on the left shows values at the cursor line.")
         self.hint.setStyleSheet("color:#8a94a0;")
         rl.addWidget(self.hint)
@@ -641,11 +641,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_mode(self, p: pg.PlotItem, cursor: pg.InfiniteLine) -> None:
         if self.reviewing:
-            p.setMouseEnabled(x=True, y=False)     # drag = move through time, ⌘+scroll = zoom time
+            p.setMouseEnabled(x=True, y=False)     # drag = move through time, ⌘/Ctrl+scroll = zoom time
             p.enableAutoRange(axis="y")
             p.setAutoVisible(y=True)               # fit y to the visible time span
         else:
-            p.setMouseEnabled(x=False, y=True)     # time follows live data; ⌘+scroll zooms y
+            p.setMouseEnabled(x=False, y=True)     # time follows live data; ⌘/Ctrl+scroll zooms y
             p.enableAutoRange(axis="y")
             p.setAutoVisible(y=False)
         cursor.setVisible(self.reviewing and self.cursor_t is not None)
@@ -924,7 +924,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--demo", action="store_true", help="simulated data, no car needed")
     ap.add_argument("--open", metavar="CSV", help="review a saved log instead of connecting")
-    ap.add_argument("--port", help="serial port (default: first /dev/cu.usbmodem*)")
+    ap.add_argument("--port", help="serial device, e.g. /dev/ttyACM0 (default: auto-detect the OpenPort)")
     ap.add_argument("--defs", help="path to RomRaider log_defs.xml (default: the copy from fetch_defs.py)")
     args = ap.parse_args()
 

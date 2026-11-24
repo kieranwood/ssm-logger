@@ -23,6 +23,7 @@ import glob
 import time
 
 import serial
+from serial.tools import list_ports
 
 ISO15765 = 6
 CH_ISO15765 = 0x30 + ISO15765          # channel byte in packets: ASCII '6'
@@ -74,11 +75,24 @@ def _describe_error(line: str) -> str:
     return f"J2534 error {code}: {J2534_ERRORS.get(code, 'unknown')}"
 
 
+# Tactrix OpenPort 2.0 USB ID (an FTDI-assigned vendor/product pair).
+OPENPORT_USB_IDS = {(0x0403, 0xCC4C)}
+# Fallback device names when the USB ID isn't reported: macOS, Linux.
+FALLBACK_PATTERNS = ("/dev/cu.usbmodem*", "/dev/ttyACM*")
+
+
 def find_port() -> str:
-    ports = sorted(glob.glob("/dev/cu.usbmodem*"))
-    if not ports:
-        raise OpenPortError("No OpenPort found (no /dev/cu.usbmodem* device). Is it plugged in?")
-    return ports[0]
+    """Find the OpenPort's serial device on macOS, Linux or Windows."""
+    ports = list(list_ports.comports())
+    for p in ports:
+        if (p.vid, p.pid) in OPENPORT_USB_IDS or "openport" in f"{p.product} {p.description}".lower():
+            return p.device
+    for pattern in FALLBACK_PATTERNS:
+        if found := sorted(glob.glob(pattern)):
+            return found[0]
+    seen = ", ".join(p.device for p in ports) or "none"
+    raise OpenPortError(f"No OpenPort found (serial ports seen: {seen}). Is it plugged in? "
+                        "Use --port to name the device.")
 
 
 class OpenPort:
