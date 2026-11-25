@@ -181,14 +181,17 @@
       <button id="g-layout-del" class="btn" title="Delete the selected layout" disabled>Delete</button>
       <button id="g-layout-reset" class="btn" title="Go back to the standard gauges for this car">Reset to default</button>
       <button id="g-reset" class="btn" title="Start the min/max readings again from now">Reset min/max</button>
+      <label class="field-label g-hero-opt" title="Show speed, revs and coolant as large dials above the other gauges"><input type="checkbox" id="g-hero" checked> Big dials on top</label>
       <label class="field-label g-size">Size <select id="g-size" class="field">
         <option value="s">Small</option><option value="m" selected>Medium</option><option value="l">Large</option>
         <option value="per" title="Pick a size on each gauge">Per gauge</option>
       </select></label>
     </div>
+    <div id="gauge-hero" hidden></div>
     <div id="gauge-grid" class="size-m"></div>
     <p class="g-hint">Click channels on the left to add or remove gauges; drag a gauge to move it; pick a gauge style on each
       (and, with Size set to Per gauge, a size).
+      Speed, revs and coolant shown as dials sit in a row of big dials at the top (untick Big dials on top to keep them in the grid).
       Pale marks show the lowest and highest values since the start (or the last reset).</p>
   </section>
   </div>

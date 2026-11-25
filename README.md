@@ -25,6 +25,8 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   scrubbed or played back.
   Size makes every gauge Small, Medium or Large, or **Per gauge** lets you size each one (S, M, L
   or Wide) so the important ones stand out; smaller gauges fill in the gaps beside big ones.
+  On the website, speed, revs and coolant (as dials) sit in a row of big dials above the rest
+  ("Big dials on top" turns this off).
   Save a set of gauges (with their styles and sizes) as a named layout (e.g. "Warm-up",
   "Fuel trims") to switch between, or reset to the default.
 - **Fault codes**: stored, pending and permanent OBD-II codes, freeze frame, readiness

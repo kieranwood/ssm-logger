@@ -584,6 +584,23 @@ body:not(.live) .g-live { display: none; }
 @media (hover: none) { .gauge .g-type, .gauge .g-tsize:not([hidden]) { display: revert !important; } }
 .gauge canvas { flex: 1; width: 100%; min-height: 0; display: block; }
 .g-layout select { max-width: 180px; }
+.g-hero-opt { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.g-hero-opt input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+/* hero row: speed, revs and coolant as large bare dials in one panel above the grid */
+#gauge-hero {
+  display: flex; flex-wrap: wrap; justify-content: space-around; align-items: center; gap: 16px;
+  margin-bottom: 16px; padding: 20px 16px 12px; background: var(--panel); border: 1px solid var(--border-soft); border-radius: 20px;
+}
+#gauge-hero[hidden] { display: none; }
+#gauge-hero .gauge {
+  height: auto; padding: 0; background: none; border: 0; border-radius: 12px; max-width: 100%; container-type: normal;
+}
+#gauge-hero .g-head { justify-content: center; min-height: 30px; position: relative; }
+#gauge-hero .g-name { flex: 0 1 auto; font-size: 13px; letter-spacing: 0.08em; }
+#gauge-hero .gauge:not(:hover):not(:focus-within) .g-type,
+#gauge-hero .gauge:not(:hover):not(:focus-within) .g-tsize { display: none; }
+#gauge-hero .gauge canvas { flex: none; width: 100%; }
+#gauge-hero .gauge.z-warn, #gauge-hero .gauge.z-danger { border: 0; }
 #layout-name { width: 240px; }
 .g-hint { color: var(--muted); font-size: 13px; margin: 16px 2px; }
 

@@ -2172,7 +2172,7 @@ function saveGaugePrefs(custom = true, layouts = undefined) {
   const sizes = { ...(p.sizes || {}) };
   for (const n of gv.index.keys()) delete sizes[n];
   Object.assign(sizes, gv.sizeOf);
-  const next = { selected: gv.sel.slice(), types, size: $("g-size").value, sizes,
+  const next = { selected: gv.sel.slice(), types, size: $("g-size").value, sizes, hero: $("g-hero").checked,
                  layouts: layouts ?? p.layouts ?? {}, layout: gv.layout };
   try { localStorage.setItem(GAUGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
   refreshLayoutSelect();
@@ -2291,6 +2291,10 @@ function setupGauges(fresh = true) {
   gv.specs = res.specs;
   gv.types = res.types;
   gv.index = new Map(rec.channels.map((c, i) => [c.name, i]));
+  // default order puts the big dials as in a dashboard: speed, revs in the middle, coolant
+  const heroAt = res.selection.map((n, k) => (HERO.includes(n) ? k : -1)).filter((k) => k >= 0);
+  const heroNames = HERO.filter((n) => res.selection.includes(n));
+  heroAt.forEach((k, j) => { res.selection[k] = heroNames[j]; });
   gv.defaultSel = res.selection.slice();
   if (fresh) {
     const prefs = loadGaugePrefs();
@@ -2302,6 +2306,7 @@ function setupGauges(fresh = true) {
     for (const [n, t] of Object.entries(prefs.types || {})) if (gv.index.has(n)) gv.typeOf[n] = t;
     gv.sizeOf = pickSizes(prefs.sizes);
     if (prefs.size) $("g-size").value = prefs.size;
+    $("g-hero").checked = prefs.hero !== false;
     $("gauge-grid").className = `size-${$("g-size").value}`;
     gv.resetT = -Infinity;
     gv.idx = 0;
@@ -2319,12 +2324,32 @@ function pickSizes(saved) {
   return out;
 }
 
+// The hero row: these channels, when shown as dials, go in one panel above the grid.
+const HERO = ["Vehicle Speed", "Engine Speed", "Coolant Temperature"];
+const gaugeType = (name) => gv.typeOf[name] || gv.specs[name].default;
+const isHero = (name) => $("g-hero").checked && HERO.includes(name) && gaugeType(name) === "dial";
+
+/** Dial size in px: with one size for all, revs is the biggest; per gauge, the gauge's own size. */
+function heroPx(name) {
+  if (perGauge()) return { s: 190, m: 260, l: 400, w: 400 }[gv.sizeOf[name] || "m"];
+  const big = name === "Engine Speed";
+  return { s: big ? 230 : 180, m: big ? 330 : 260, l: big ? 420 : 330 }[$("g-size").value] || 260;
+}
+
 /** Per gauge mode: span each tile over its size's cells, never wider than the grid. */
 function layoutTiles() {
   const grid = $("gauge-grid");
   const per = perGauge();
   const cols = Math.max(1, Math.floor((grid.clientWidth + CELL_GAP) / (CELL_W + CELL_GAP)));
+  const heroW = $("gauge-hero").clientWidth - 32;
   for (const [name, tile] of gv.tiles) {
+    if (tile.hero) {
+      const px = Math.max(160, Math.min(heroPx(name), heroW > 0 ? heroW : Infinity));
+      tile.el.style.width = `${px}px`;
+      tile.canvas.style.height = `${px}px`;
+      tile.sizeSel.hidden = !per;
+      continue;
+    }
     const [c, r] = TILE_SIZES[gv.sizeOf[name] || "m"];
     tile.el.style.gridColumn = per ? `span ${Math.min(c, cols)}` : "";
     tile.el.style.gridRow = per ? `span ${r}` : "";
@@ -2333,8 +2358,9 @@ function layoutTiles() {
 }
 
 function buildGaugeTiles() {
-  const grid = $("gauge-grid");
+  const grid = $("gauge-grid"), heroRow = $("gauge-hero");
   grid.replaceChildren();
+  heroRow.replaceChildren();
   gv.tiles.clear();
   for (const name of gv.sel) {
     const i = gv.index.get(name);
@@ -2352,10 +2378,12 @@ function buildGaugeTiles() {
     sel.value = gv.typeOf[name] || gv.specs[name].default;
     sel.title = "Gauge style (· marks the usual one for this channel)";
     sel.addEventListener("change", () => {
+      const wasHero = isHero(name);
       if (sel.value === gv.specs[name].default) delete gv.typeOf[name];
       else gv.typeOf[name] = sel.value;
       saveGaugePrefs();
-      drawGauges();
+      if (isHero(name) !== wasHero) buildGaugeTiles();     // moves between the hero row and the grid
+      else drawGauges();
     });
     const sizeSel = el.querySelector(".g-tsize");
     for (const [k, [, , text]] of Object.entries(TILE_SIZES)) sizeSel.append(new Option(text, k));
@@ -2369,9 +2397,16 @@ function buildGaugeTiles() {
     });
     el.querySelector(".g-close").addEventListener("click", () => toggleGauge(name));
     dragToMove(el, name);
-    grid.append(el);
-    gv.tiles.set(name, { i, el, sizeSel, canvas: el.querySelector("canvas"), statusEl: el.querySelector(".g-status") });
+    const hero = isHero(name);
+    el.classList.toggle("hero", hero);
+    if (hero) {
+      sizeSel.querySelector('option[value="w"]').remove();
+      if (!sizeSel.value) sizeSel.value = "l";
+    }
+    (hero ? heroRow : grid).append(el);
+    gv.tiles.set(name, { i, el, sizeSel, hero, canvas: el.querySelector("canvas"), statusEl: el.querySelector(".g-status") });
   }
+  heroRow.hidden = !heroRow.children.length;
   layoutTiles();
   drawGauges();
 }
@@ -2623,6 +2658,10 @@ $("g-size").addEventListener("change", (e) => {
   saveGaugePrefs();
   layoutTiles();
   requestAnimationFrame(drawGauges);
+});
+$("g-hero").addEventListener("change", () => {
+  saveGaugePrefs();
+  buildGaugeTiles();
 });
 // the grid's width changes with the window and with the Analysis panel opening or closing
 new ResizeObserver(() => requestAnimationFrame(() => { layoutTiles(); drawGauges(); })).observe($("gauge-grid"));
