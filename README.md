@@ -162,7 +162,7 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `profiles.py` | Engine profiles: the engine-specific thresholds, and auto-detection |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
 | `probe.py` | Proof-of-concept connection test |
-| `web/` | Browser version: viewer, live logging over Web Serial (`openport.js`, `live.js`), demo ECU (`fake-ecu.js`), Python glue (`webapp.py`). Deployed to GitHub Pages by `.github/workflows/pages.yml` |
+| `web/` | Browser version: viewer, live logging over Web Serial (`openport.js`, `live.js`), demo ECU (`fake-ecu.js`), Python glue (`webapp.py`). Deployed to GitHub Pages by `.github/workflows/pages.yml`. Styling in `style.css` (dark and light themes); bundled fonts in `web/fonts/` (Space Grotesk and JetBrains Mono, both SIL Open Font License) |
 | `sdcard/logcfg.txt` | OpenPort standalone (SD card) logging config for the 2012 Forester |
 
 ## Limitations

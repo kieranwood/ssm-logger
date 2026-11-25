@@ -21,8 +21,15 @@ const DEFAULT_CHANNELS = [
   "Air Flow Sensor Voltage", "Engine Speed", "Coolant Temperature",
   "Battery Voltage", "CPC Valve Duty Ratio",
 ];
-const COLORS = ["#4e9fff", "#ff8a3d", "#3ecf8e", "#e5484d", "#b97cff", "#f5c542",
-                "#2ec4d6", "#ff6fae", "#9aa5b1"];
+// Chart line colours (dark theme, light theme). A channel keeps its slot, so switching theme
+// only changes the shade.
+const COLORS_DARK = ["#5B9BFF", "#FF9F43", "#4ADE9A", "#FF6B8A", "#B794FF", "#F5D04A", "#3DD6D0", "#E8B796"];
+const COLORS_LIGHT = ["#2F6FDB", "#D9700F", "#13965A", "#D63A5E", "#7B4FD6", "#A88400", "#0E8F8A", "#A8673E"];
+const palette = () => (isDark() ? COLORS_DARK : COLORS_LIGHT);
+function isDark() {
+  const t = document.documentElement.dataset.theme;
+  return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+}
 const LEVEL_MARK = { problem: "✖", warning: "▲", info: "•", ok: "✔" };
 const CHART_HEIGHT = 140;
 const HISTORY_ROWS = 80_000;          // live history kept in memory (~1 hour at 22 samples/s)
@@ -54,8 +61,12 @@ const state = {
 // ------------------------------------------------------------------ Python
 
 function setStatus(text, error = false) {
-  $("status").textContent = text;
-  $("status").classList.toggle("error", error);
+  const el = $("status");
+  el.textContent = text;
+  el.hidden = !text;
+  el.classList.toggle("error", error);
+  // green with a pulsing dot while logging from the car
+  el.classList.toggle("ok", !error && !!state.session && /^(Logging|Demo · logging)/.test(text));
 }
 
 const fetchOpts = { cache: VERSION === "dev" ? "no-store" : "default" };
@@ -153,7 +164,8 @@ function showRecording(rec) {
   $("analyse").disabled = false;
   $("reset").disabled = false;
   $("tools").disabled = false;
-  $("view").disabled = false;
+  $("view-gauges").disabled = $("view-charts").disabled = false;
+  document.body.classList.add("has-rec");
   document.body.classList.toggle("live", rec.live);
   setupGauges();
   setView(state.view);
@@ -163,19 +175,25 @@ function updateInfo() {
   const rec = state.rec;
   const n = rec.t.length;
   const dur = n ? rec.t[n - 1] - rec.t[0] : 0;
-  $("info").textContent = [rec.name, rec.info, `${(dur / 60).toFixed(1)} min`,
-    `${n} rows, ${rec.channels.length} channels`].filter(Boolean).join("  |  ");
+  $("title").textContent = rec.live ? "Live data" : rec.name;
+  $("title").title = rec.name;
+  const parts = [rec.info, `${(dur / 60).toFixed(1)} min`, `${n.toLocaleString("en")} rows`,
+                 `${rec.channels.length} channels`].filter(Boolean);
+  $("info").replaceChildren(...parts.map((t) => Object.assign(document.createElement("span"), { textContent: t })));
 }
 
 // Colours follow the order channels were switched on, like the desktop app, and stick to a
 // channel until it is switched off.
-const colorOf = new Map();
+const colorOf = new Map();          // channel -> palette slot
 function colorFor(idx) {
+  const P = palette();
   if (!colorOf.has(idx)) {
     const used = new Set(state.selected.filter((j) => j !== idx && colorOf.has(j)).map((j) => colorOf.get(j)));
-    colorOf.set(idx, COLORS.find((c) => !used.has(c)) || COLORS[colorOf.size % COLORS.length]);
+    let slot = P.findIndex((_, k) => !used.has(k));
+    if (slot < 0) slot = colorOf.size % P.length;
+    colorOf.set(idx, slot);
   }
-  return colorOf.get(idx);
+  return P[colorOf.get(idx)];
 }
 
 function buildChannelList() {
@@ -187,8 +205,16 @@ function buildChannelList() {
     row.dataset.idx = i;
     row.dataset.search = `${c.name} ${c.units}`.toLowerCase();
     row.title = c.units ? `${c.name} (${c.units})` : c.name;
-    row.innerHTML = `<span class="swatch"></span><span class="name"></span><span class="val"></span>`;
-    row.querySelector(".name").textContent = row.title;
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.innerHTML = `<span class="box"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+      `stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg></span>` +
+      `<span class="name"><span class="n"></span> <span class="u"></span></span><span class="val num"></span>`;
+    row.querySelector(".n").textContent = c.name;
+    row.querySelector(".u").textContent = c.units || "";
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleChannel(i); }
+    });
     row.addEventListener("click", () => toggleChannel(i));
     list.appendChild(row);
   });
@@ -201,8 +227,11 @@ function refreshChannelList() {
     const gauges = state.view === "gauges";
     const on = gauges ? gv.sel.includes(state.rec.channels[i].name) : state.selected.includes(i);
     row.classList.toggle("on", on);
-    row.querySelector(".swatch").style.background = !on ? "transparent" : gauges ? "var(--accent)" : colorFor(i);
+    row.setAttribute("aria-pressed", String(on));
+    row.style.setProperty("--ch", !on ? "transparent" : gauges ? "var(--accent)" : colorFor(i));
   }
+  const n = state.view === "gauges" ? gv.sel.length : state.selected.length;
+  $("ch-count").textContent = `${n} ${state.view === "gauges" ? "shown" : "charted"}`;
   updateValues();
 }
 
@@ -362,9 +391,13 @@ function addChart(i) {
   el.className = "chart";
   const label = document.createElement("div");
   label.className = "label";
-  label.innerHTML = `<span class="grip" draggable="true" title="Drag to move this chart">⠿</span>` +
-    `<span class="n"></span><span class="v"></span>`;
+  label.innerHTML = `<span class="grip" draggable="true" title="Drag to move this chart">` +
+    `<svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.4"></circle>` +
+    `<circle cx="9" cy="3" r="1.4"></circle><circle cx="3" cy="8" r="1.4"></circle><circle cx="9" cy="8" r="1.4"></circle>` +
+    `<circle cx="3" cy="13" r="1.4"></circle><circle cx="9" cy="13" r="1.4"></circle></svg></span>` +
+    `<span class="sw"></span><span class="n"></span><span class="v num"></span>`;
   label.querySelector(".n").textContent = ch.name;
+  label.querySelector(".sw").style.background = colorFor(i);
   el.appendChild(label);
   const maxBtn = document.createElement("button");
   maxBtn.className = "chart-max";
@@ -380,7 +413,9 @@ function addChart(i) {
   $("charts").insertBefore(el, next ? next.el : null);
 
   const axis = { stroke: cssVar("--axis"), grid: { stroke: cssVar("--grid"), width: 1 },
-                 ticks: { stroke: cssVar("--grid"), width: 1 } };
+                 ticks: { stroke: cssVar("--grid"), width: 1 },
+                 font: '11px "JetBrains Mono", ui-monospace, monospace',
+                 labelFont: '500 12px "Space Grotesk", system-ui, sans-serif' };
   const existing = [...state.charts.values()][0];
   const opts = {
     width: chartWidth(),
@@ -394,7 +429,7 @@ function addChart(i) {
     ],
     series: [
       {},
-      { stroke: colorFor(i), width: 1.25, paths: ch.switch ? uPlot.paths.stepped({ align: 1 }) : undefined },
+      { stroke: colorFor(i), width: 1.6, paths: ch.switch ? uPlot.paths.stepped({ align: 1 }) : undefined },
       ...(compareSeries(i) ? [{ stroke: cssVar("--compare"), width: 1.1, dash: [6, 4], spanGaps: true }] : []),
     ],
     hooks: {
@@ -438,30 +473,64 @@ function redrawAll() {
 
 // ------------------------------------------------------------------ findings
 
+const LEVELS = {
+  problem: { title: "Problems", label: "Problems",
+             icon: '<path d="M8.3 2h7.4L22 8.3v7.4L15.7 22H8.3L2 15.7V8.3z"></path><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path>' },
+  warning: { title: "Warnings", label: "Warnings",
+             icon: '<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path>' },
+  info: { title: "For information", label: "Info",
+          icon: '<circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path>' },
+  ok: { title: "Looks fine", label: "OK", icon: '<circle cx="12" cy="12" r="9"></circle><path d="M8 12l3 3 5-6"></path>' },
+};
+
 function showFindings(fs = state.rec.findings, title = "Analysis") {
   $("findings-title").textContent = title;
+  const rec = state.rec, n = rec.t.length;
+  const meta = [n ? `${((rec.t[n - 1] - rec.t[0]) / 60).toFixed(1)} min` : "", `${n.toLocaleString("en")} rows`];
+  $("findings-meta").replaceChildren(...meta.filter(Boolean).map((t) => Object.assign(document.createElement("span"), { textContent: t })));
   const counts = {};
   for (const f of fs) counts[f.level] = (counts[f.level] || 0) + 1;
-  $("counts").textContent = ["problem", "warning", "info", "ok"]
-    .filter((lv) => counts[lv]).map((lv) => `${counts[lv]} ${lv}`).join(" · ");
+  $("counts").replaceChildren(...Object.keys(LEVELS).filter((lv) => counts[lv]).map((lv) => {
+    const c = document.createElement("span");
+    c.className = `count lv-${lv}`;
+    c.innerHTML = `<b class="num"></b><span></span>`;
+    c.querySelector("b").textContent = counts[lv];
+    c.querySelector("span").textContent = LEVELS[lv].label;
+    return c;
+  }));
 
   const list = $("finding-list");
   list.replaceChildren();
-  fs.forEach((f) => {
-    const li = document.createElement("li");
-    li.className = `lv-${f.level}`;
-    li.innerHTML = `<div class="title"></div><div class="detail"></div>`;
-    li.querySelector(".title").textContent = `${LEVEL_MARK[f.level]}  ${f.title}`;
-    li.querySelector(".detail").textContent = f.detail;
-    if (f.when) {
-      const w = document.createElement("div");
-      w.className = "when";
-      w.textContent = `When: ${f.when}`;
-      li.querySelector(".detail").appendChild(w);
+  for (const lv of Object.keys(LEVELS)) {
+    const group = fs.filter((f) => f.level === lv);
+    if (!group.length) continue;
+    const sec = document.createElement("section");
+    sec.className = `f-group lv-${lv}`;
+    sec.innerHTML = `<h3>${LEVELS[lv].title} <span class="num"></span></h3><ol></ol>`;
+    sec.querySelector("h3 span").textContent = group.length;
+    for (const f of group) {
+      const li = document.createElement("li");
+      li.className = `lv-${f.level}`;
+      li.innerHTML = `<button class="f-row" type="button" aria-expanded="false">` +
+        `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ` +
+        `stroke-linejoin="round" aria-hidden="true" class="f-icon">${LEVELS[lv].icon}</svg>` +
+        `<span class="title"></span>` +
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" ` +
+        `stroke-linejoin="round" aria-hidden="true" class="chev"><path d="M6 9l6 6 6-6"></path></svg></button>` +
+        `<div class="detail"></div>`;
+      li.querySelector(".title").textContent = f.title;
+      li.querySelector(".detail").textContent = f.detail;
+      if (f.when) {
+        const w = document.createElement("div");
+        w.className = "when num";
+        w.textContent = `When: ${f.when}`;
+        li.querySelector(".detail").appendChild(w);
+      }
+      li.querySelector(".f-row").addEventListener("click", () => selectFinding(li, f));
+      sec.querySelector("ol").append(li);
     }
-    li.addEventListener("click", () => selectFinding(li, f));
-    list.appendChild(li);
-  });
+    list.append(sec);
+  }
   $("findings").hidden = false;
   if (state.maxChart != null) maximiseChart(null);     // the findings panel needs the room
   resizeCharts();
@@ -470,13 +539,17 @@ function showFindings(fs = state.rec.findings, title = "Analysis") {
 function selectFinding(li, f) {
   if (state.view === "gauges") setView("charts");
   const was = li.classList.contains("sel");
-  for (const el of $("finding-list").children) el.classList.remove("sel");
+  for (const el of $("finding-list").querySelectorAll("li")) {
+    el.classList.remove("sel");
+    el.querySelector(".f-row").setAttribute("aria-expanded", "false");
+  }
   if (was) {
     state.highlight = [];
     redrawAll();
     return;
   }
   li.classList.add("sel");
+  li.querySelector(".f-row").setAttribute("aria-expanded", "true");
   state.highlight = f.times.filter(([a, b]) => a != null && b != null);
   if (state.highlight.length) {
     if (state.rec.live) setFollowing(false);
@@ -573,6 +646,10 @@ function updateLiveStatus() {
     parts.push(`auto-capture ${cs}`);
   }
   if (s.statusText === "Logging") {
+    // the header pill keeps showing the rate, unless another message has taken it over
+    const pill = $("status").textContent;
+    const base = pill.startsWith("Demo · logging") ? "Demo · logging" : pill.startsWith("Logging") ? "Logging" : null;
+    if (base) setStatus(s.rate ? `${base} · ${s.rate.toFixed(1)}/s` : base);
     $("cursor-readout").textContent = ["Logging", ...parts].filter(Boolean).join(" · ") +
       (state.following ? "" : " · paused view (Space to resume)");
   }
@@ -633,7 +710,7 @@ async function startLive(port, { demo }) {
   const session = new LiveSession(py, port, {
     onStatus: (text, error) => {
       session.statusText = text;
-      if (text === "Logging") setStatus(demo ? "Demo - replaying the sample recording" : "");
+      if (text === "Logging") setStatus(demo ? "Demo · logging" : "Logging");
       else setStatus(text, error);
       $("cursor-readout").textContent = text;
     },
@@ -733,14 +810,14 @@ function toggleRecording() {
   const s = state.session;
   if (!s?.channels) return;
   state.recorder = new CsvRecorder(s.channels, s.ecuId);
-  $("record").textContent = "Stop & save";
+  $("record").querySelector(".lbl").textContent = "Stop & save";
   $("record").classList.add("recording");
 }
 
 function stopRecording() {
   const rec = state.recorder;
   state.recorder = null;
-  $("record").textContent = "Record";
+  $("record").querySelector(".lbl").textContent = "Record";
   $("record").classList.remove("recording");
   if (!rec || !rec.rows) return;
   download(rec.blob(), rec.filename());
@@ -1003,7 +1080,7 @@ function setupAlerts() {
 function setAlertsOn(on) {
   state.alertsOn = on;
   $("alerts").classList.toggle("armed", on);
-  $("alerts").textContent = on ? "Alerts on" : "Alerts off";
+  $("alerts").querySelector(".lbl").textContent = on ? "Alerts on" : "Alerts off";
   if (!on) {
     state.alertActive = [];
     showAlertBanner();
@@ -1014,8 +1091,17 @@ function setAlertsOn(on) {
 
 function showAlertBanner() {
   const active = state.alertActive || [];
-  $("alert-banner").hidden = !active.length;
-  $("alert-banner").textContent = active.length ? `⚠  ${active.join("   ·   ")}` : "";
+  const banner = $("alert-banner");
+  banner.hidden = !active.length;
+  banner.replaceChildren();
+  if (active.length) {
+    banner.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+      `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 ` +
+      `1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>`;
+    const txt = document.createElement("span");
+    txt.textContent = active.join("   ·   ");
+    banner.append(txt);
+  }
   resizeCharts();
 }
 
@@ -1274,7 +1360,7 @@ function resizeCharts() {
 
 /** A maximised chart fills the chart area; the others keep the standard height. */
 function chartHeight(i) {
-  return state.maxChart === i ? Math.max(CHART_HEIGHT, $("charts").clientHeight - 1) : CHART_HEIGHT;
+  return state.maxChart === i ? Math.max(CHART_HEIGHT, $("charts").clientHeight - 31) : CHART_HEIGHT;   // 30 px title strip
 }
 
 function setMaxButton(btn, maxed) {
@@ -1358,7 +1444,7 @@ $("tools").addEventListener("click", (e) => {
 });
 document.addEventListener("click", () => { $("tools-menu").hidden = true; $("tools").setAttribute("aria-expanded", "false"); });
 $("tools-menu").addEventListener("click", (e) => {
-  if (e.target.closest(".menu-row")) { e.stopPropagation(); return; }   // the engine selector
+  if (e.target.closest(".menu-radios")) { e.stopPropagation(); return; }   // the engine profile choices
   const act = e.target.closest("button")?.dataset.act;
   $("tools-menu").hidden = true;
   if (act === "guided") openGuided();
@@ -1728,7 +1814,8 @@ function setView(v) {
   if (gauges && state.maxChart != null) maximiseChart(null);
   $("charts").hidden = gauges;
   $("gauges").hidden = !gauges;
-  $("view").textContent = gauges ? "Charts" : "Gauges";
+  $("view-gauges").setAttribute("aria-pressed", String(gauges));
+  $("view-charts").setAttribute("aria-pressed", String(!gauges));
   refreshChannelList();
   if (gauges) {
     if (!state.rec.live && state.cursorIdx != null) gv.idx = state.cursorIdx;
@@ -1773,7 +1860,8 @@ function playFrame(now) {
   if (gv.playing) requestAnimationFrame(playFrame);
 }
 
-$("view").addEventListener("click", () => setView(state.view === "gauges" ? "charts" : "gauges"));
+$("view-gauges").addEventListener("click", () => setView("gauges"));
+$("view-charts").addEventListener("click", () => setView("charts"));
 $("g-play").addEventListener("click", () => (gv.playing ? stopPlay() : startPlay()));
 $("g-slider").addEventListener("input", (e) => {
   gv.idx = Number(e.target.value);
@@ -1796,7 +1884,13 @@ new ResizeObserver(() => requestAnimationFrame(() => { layoutTiles(); drawGauges
 // ------------------------------------------------------------------ theme
 
 const THEME_KEY = "ssm-logger.theme";
-const THEMES = { auto: "◐ Auto", light: "☀ Light", dark: "☾ Dark" };
+const ICON = (d) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+  `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const THEMES = {
+  auto: ICON('<circle cx="12" cy="12" r="9"></circle><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"></path>'),
+  light: ICON('<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>'),
+  dark: ICON('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>'),
+};
 
 function currentTheme() {
   const t = document.documentElement.dataset.theme;
@@ -1819,8 +1913,9 @@ function setTheme(t) {
 
 function updateThemeButton() {
   const t = currentTheme();
-  $("theme").textContent = THEMES[t];
+  $("theme").innerHTML = THEMES[t];
   $("theme").title = `Theme: ${t === "auto" ? "following the system" : t} - click to switch`;
+  $("theme").setAttribute("aria-label", $("theme").title);
 }
 
 $("theme").addEventListener("click", () => {
@@ -1836,29 +1931,43 @@ updateThemeButton();
 
 const PROFILE_KEY = "ssm-logger.profile";
 
+let profileChoice = "auto";
+
 function setupProfiles() {
-  const sel = $("profile");
-  sel.replaceChildren();
-  for (const [key, label] of JSON.parse(state.py.globals.get("profile_choices")())) {
-    sel.append(new Option(label, key));
-  }
+  const box = $("profile");
+  box.replaceChildren();
   let saved = "auto";
   try { saved = localStorage.getItem(PROFILE_KEY) || "auto"; } catch { /* private mode */ }
-  if ([...sel.options].some((o) => o.value === saved)) sel.value = saved;
-  state.py.globals.get("set_profile")(sel.value);
+  const choices = JSON.parse(state.py.globals.get("profile_choices")());
+  if (!choices.some(([k]) => k === saved)) saved = "auto";
+  for (const [key, label] of choices) {
+    // "Naturally aspirated 2.5 L (FB25, EJ25 non-turbo)" -> name and engines on two lines
+    const m = label.match(/^(.*?) \((.*)\)$/);
+    const row = document.createElement("label");
+    row.className = "mi radio";
+    row.innerHTML = `<input type="radio" name="engine"><span class="mi-text"><b></b><small></small></span>`;
+    row.querySelector("input").value = key;
+    row.querySelector("input").checked = key === saved;
+    row.querySelector("b").textContent = m ? m[1] : label;
+    row.querySelector("small").textContent = m ? m[2] : key === "auto" ? "Detect from the logged channels" : "";
+    row.querySelector("input").addEventListener("change", () => chooseProfile(key, m ? m[1] : label));
+    box.append(row);
+  }
+  profileChoice = saved;
+  state.py.globals.get("set_profile")(saved);
 }
 
-$("profile").addEventListener("change", (e) => {
-  const key = e.target.value;
+function chooseProfile(key, label) {
+  profileChoice = key;
   try { localStorage.setItem(PROFILE_KEY, key); } catch { /* private mode */ }
   state.py.globals.get("set_profile")(key);
   $("tools-menu").hidden = true;
-  const label = e.target.selectedOptions[0].textContent;
   setStatus(`Engine profile: ${label}`);
   if (state.rec) setupGauges(false);
   // refresh an open analysis so it reflects the new thresholds
   if (state.rec && !$("findings").hidden && $("findings-title").textContent === "Analysis") analyseNow(true);
-});
+}
+
 
 $("compare-file").addEventListener("change", (e) => { openCompare(e.target.files[0]); e.target.value = ""; });
 $("compare-close").addEventListener("click", closeCompare);
@@ -1945,3 +2054,5 @@ const params = new URLSearchParams(location.search);
 const startUrl = params.get("url") || (params.has("sample") ? SAMPLE_URL : null);
 if (startUrl) openUrl(startUrl);
 else if (params.has("demo")) startDemo();
+// The bundled fonts load after the first paint: redraw canvas text (charts, gauges) once they're in.
+document.fonts?.ready.then(() => { if (state.rec) repaintTheme(); });

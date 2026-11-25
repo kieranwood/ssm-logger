@@ -9,108 +9,163 @@
   // apply the saved theme before the page paints (app.js handles the switch)
   try { const t = localStorage.getItem("ssm-logger.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
 </script>
+<link rel="preload" href="fonts/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
 <link rel="stylesheet" href="style.css?v=dev">
 </head>
 <body>
 <header>
-  <span class="idle-only">
-    <label class="btn primary" for="file">Open recording…</label>
-    <input id="file" type="file" accept=".csv,text/csv" hidden>
-    <button id="connect" class="btn">Connect to car</button>
-    <button id="demo" class="btn">Live demo</button>
-  </span>
-  <span class="live-only">
-    <button id="record" class="btn primary" title="Record to a CSV that downloads when you stop">Record</button>
-    <button id="mark" class="btn" title="Drop a numbered marker (M)">Mark</button>
-    <button id="autocap" class="btn" title="Save the data around a fault automatically">Auto-capture</button>
-    <button id="capnow" class="btn" title="Save the last seconds and the next few now (C)">Capture now</button>
-    <button id="pause" class="btn">Pause</button>
-    <label class="window">Window
-      <select id="window">
-        <option value="30">30 s</option>
-        <option value="60">1 min</option>
-        <option value="120" selected>2 min</option>
-        <option value="300">5 min</option>
-        <option value="600">10 min</option>
-        <option value="0">All</option>
-      </select>
-    </label>
-    <button id="alerts" class="btn armed" title="Warn when a value crosses a limit (rules under Tools)">Alerts on</button>
-    <button id="codes" class="btn">Fault codes…</button>
-    <button id="disconnect" class="btn">Disconnect</button>
-  </span>
-  <button id="view" class="btn" disabled title="Switch between charts and gauges (G)">Gauges</button>
-  <button id="analyse" class="btn" disabled>Analyse</button>
-  <button id="reset" class="btn" disabled>Reset zoom</button>
-  <span class="menu-wrap">
-    <button id="tools" class="btn" aria-haspopup="true" aria-expanded="false" disabled>Tools ▾</button>
-    <div id="tools-menu" class="menu" hidden>
-      <button data-act="guided">Guided tests…</button>
-      <button data-act="compare" class="rec-item">Compare with another recording…</button>
-      <button data-act="report">Report…</button>
-      <button data-act="readiness" class="live-item">Readiness tracker…</button>
-      <button data-act="capset" class="live-item">Auto-capture settings…</button>
-      <button data-act="alertset" class="live-item">Alert settings…</button>
-      <label class="menu-row" title="Sets what counts as normal in Analyse, guided tests and reports">Engine
-        <select id="profile"><option value="auto">Automatic</option></select></label>
+  <div class="hrow">
+    <div class="brand">
+      <div class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 17a8.5 8.5 0 1 1 15 0"></path><path d="M12 13l4-5"></path><circle cx="12" cy="13" r="1.4"></circle></svg></div>
+      <div class="brand-text">
+        <div class="title-row">
+          <h1 id="title">SSM Log Viewer</h1>
+          <span id="status" class="pill">Loading Python…</span>
+        </div>
+        <div id="info" class="meta num"></div>
+      </div>
     </div>
-  </span>
-  <button id="theme" class="btn" title="Theme: follow the system, light or dark">◐ Auto</button>
-  <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
-  <span id="compare-bar" hidden>
-    <i id="compare-name"></i> shift <input id="compare-shift" type="number" step="0.5" value="0"> s
-    <button id="compare-close" class="btn small" aria-label="Stop comparing">✕</button>
-  </span>
-  <span id="info" class="info"></span>
-  <span id="status" class="status">Loading Python…</span>
+    <nav class="idle-only" aria-label="Open">
+      <label class="btn primary" for="file"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><path d="M14 3v6h6"></path><path d="M12 18v-6M9 15l3-3 3 3"></path></svg>Open recording…</label>
+      <input id="file" type="file" accept=".csv,text/csv" hidden>
+      <button id="connect" class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6M15 2v6"></path><path d="M6 8h12v4a6 6 0 0 1-12 0z"></path><path d="M12 18v4"></path></svg>Connect to car</button>
+      <button id="demo" class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l6-3.5z"></path></svg>Live demo</button>
+    </nav>
+    <nav class="live-only" aria-label="Session">
+      <button id="record" class="btn" title="Record to a CSV that downloads when you stop"><span class="rec-dot"></span><span class="lbl">Record</span></button>
+      <button id="mark" class="btn" title="Drop a numbered marker (M)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"></path></svg>Mark</button>
+      <button id="capnow" class="btn" title="Save the last seconds and the next few now (C)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><circle cx="12" cy="13" r="3.5"></circle><path d="M8 6l1.5-2h5L16 6"></path></svg>Capture now</button>
+      <button id="autocap" class="btn" title="Save the data around a fault automatically">Auto-capture</button>
+      <button id="pause" class="btn">Pause</button>
+      <label class="field-label">Window
+        <select id="window" class="field">
+          <option value="30">30 s</option>
+          <option value="60">1 min</option>
+          <option value="120" selected>2 min</option>
+          <option value="300">5 min</option>
+          <option value="600">10 min</option>
+          <option value="0">All</option>
+        </select>
+      </label>
+    </nav>
+    <button id="theme" class="btn icon-btn" title="Theme: follow the system, light or dark" aria-label="Switch theme"></button>
+  </div>
+  <div class="hrow tools-row">
+    <div class="seg-group" role="group" aria-label="View">
+      <button id="view-gauges" class="seg" type="button" disabled title="Gauges (G)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 17a8.5 8.5 0 1 1 15 0"></path><path d="M12 13l4-5"></path></svg>Gauges</button>
+      <button id="view-charts" class="seg" type="button" disabled title="Charts (G)" aria-pressed="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"></path><path d="M7 15l4-4 3 3 5-6"></path></svg>Charts</button>
+    </div>
+    <span class="live-only">
+      <button id="alerts" class="btn armed" title="Warn when a value crosses a limit (rules under Tools)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"></path><path d="M10.3 20a2 2 0 0 0 3.4 0"></path></svg><span class="lbl">Alerts on</span></button>
+      <button id="codes" class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-2.5z"></path></svg>Fault codes</button>
+    </span>
+    <button id="analyse" class="btn" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 8-6-16-3 8H2"></path></svg>Analyse</button>
+    <button id="reset" class="btn" disabled>Reset zoom</button>
+    <span class="menu-wrap">
+      <button id="tools" class="btn" aria-haspopup="true" aria-expanded="false" disabled>Tools<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="chev"><path d="M6 9l6 6 6-6"></path></svg></button>
+      <div id="tools-menu" class="menu" hidden role="menu" aria-label="Tools">
+        <div class="menu-section">Diagnose</div>
+        <button data-act="guided" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3 8-8"></path><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"></path></svg></span><span class="mi-text"><b>Guided tests…</b><small>Step-by-step checks such as warm-up and thermostat</small></span></button>
+        <button data-act="readiness" class="live-item" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg></span><span class="mi-text"><b>Readiness tracker…</b><small>Which emissions self-tests have completed since codes were cleared</small></span></button>
+        <button data-act="report" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><path d="M14 3v6h6"></path><path d="M8 13h8M8 17h5"></path></svg></span><span class="mi-text"><b>Report…</b><small>One page with codes, freeze frame and charts to share or print</small></span></button>
+        <button data-act="compare" class="rec-item" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l5-5 4 4 8-8"></path><path d="M3 12l5-5 4 4" stroke-dasharray="2 3"></path></svg></span><span class="mi-text"><b>Compare with another recording…</b><small>Draw a second log dashed on the same charts</small></span></button>
+        <div class="menu-sep live-item"></div>
+        <div class="menu-section live-item">Capture &amp; alerts</div>
+        <button data-act="capset" class="live-item" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="2"></rect><circle cx="12" cy="13" r="3.5"></circle><path d="M8 6l1.5-2h5L16 6"></path></svg></span><span class="mi-text"><b>Auto-capture settings…</b><small>Save the data around a trigger as its own recording</small></span><span id="capset-badge" class="badge num" hidden></span></button>
+        <button data-act="alertset" class="live-item" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"></path><path d="M10.3 20a2 2 0 0 0 3.4 0"></path></svg></span><span class="mi-text"><b>Alert settings…</b><small>Banner and beep while a rule is true</small></span><span id="alertset-badge" class="badge num" hidden></span></button>
+        <div class="menu-sep"></div>
+        <div class="menu-section">Engine profile</div>
+        <div class="menu-note">Sets the rules of thumb that Analysis uses.</div>
+        <div id="profile" class="menu-radios" role="radiogroup" aria-label="Engine profile"></div>
+      </div>
+    </span>
+    <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
+    <span id="compare-bar" hidden>
+      <i id="compare-name"></i> shift <input id="compare-shift" class="field" type="number" step="0.5" value="0"> s
+      <button id="compare-close" class="btn small" aria-label="Stop comparing">✕</button>
+    </span>
+    <span class="spacer"></span>
+    <button id="disconnect" class="btn live-only danger-text"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 15l6-6"></path><path d="M11 6l1.5-1.5a4.2 4.2 0 0 1 6 6L17 12"></path><path d="M13 18l-1.5 1.5a4.2 4.2 0 0 1-6-6L7 12"></path></svg>Disconnect</button>
+  </div>
 </header>
 
+<div id="alert-banner" role="status" hidden></div>
+
 <main id="main">
-  <aside id="side">
-    <input id="filter" type="search" placeholder="Filter channels…" disabled>
+  <aside id="side" aria-label="Channels">
+    <div class="side-head"><h2>Channels</h2><span id="ch-count" class="num"></span></div>
+    <label class="search">
+      <span class="sr">Filter channels</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+      <input id="filter" class="field" type="search" placeholder="Filter channels…" disabled>
+    </label>
     <div id="channels"></div>
   </aside>
 
   <div id="chart-col">
-  <div id="alert-banner" hidden></div>
   <section id="charts">
-    <div id="empty" class="empty">
-      <h1>SSM Log Viewer</h1>
-      <p>Drop a recording here, or use <b>Open recording…</b></p>
-      <p><button id="sample" class="btn">Try a sample recording</button></p>
-      <p class="sub">The sample is a 2012 Forester with a P0171 (system too lean) code from a failing
-        front A/F sensor: fuel trim stuck near +35% while warming up, and the rear O2 sensor reading rich.</p>
-      <h2>Log live</h2>
-      <p>Plug in a Tactrix OpenPort 2.0, turn the ignition on, then
-        <button id="connect-empty" class="btn primary">Connect to car</button></p>
-      <p class="sub" id="serial-note" hidden>Connecting needs Chrome or Edge on a desktop computer.</p>
-      <p><button id="demo-empty" class="btn">Try the live demo</button></p>
-      <p class="sub">The demo replays the sample through an emulated cable and ECU, so it works without a car.</p>
-      <p class="sub">Reads CSVs from the <a href="https://github.com/kieranwood/ssm-logger">ssm-logger</a>
-        desktop app and from the OpenPort's SD-card logging, and runs the same fuel-trim and sensor
-        checks. Everything runs in your browser - nothing is uploaded.</p>
+    <div id="empty" class="start">
+      <div class="start-intro">
+        <div class="eyebrow">Subaru data logs</div>
+        <h1>See what your engine is doing.</h1>
+        <p>Open a log file or connect to the car for live gauges, charts, fault codes and fuel-trim checks.</p>
+      </div>
+      <div class="start-cards">
+        <section class="start-card" aria-labelledby="open-h">
+          <div class="card-head"><span class="card-icon cyan"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><path d="M14 3v6h6"></path><path d="M12 18v-6M9 15l3-3 3 3"></path></svg></span><h2 id="open-h">Open a recording</h2></div>
+          <label class="drop-zone" for="file">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"></path><path d="M12 4v11"></path><path d="M7 9l5-5 5 5"></path></svg>
+            <span class="dz-text">Drop a CSV log here</span>
+            <span class="btn">Browse files…</span>
+          </label>
+          <p class="card-note">CSV logs from the <a href="https://github.com/kieranwood/ssm-logger">ssm-logger</a> desktop app or the OpenPort's SD-card logging.</p>
+        </section>
+        <section class="start-card" aria-labelledby="live-h">
+          <div class="card-head"><span class="card-icon green"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6M15 2v6"></path><path d="M6 8h12v4a6 6 0 0 1-12 0z"></path><path d="M12 18v4"></path></svg></span><h2 id="live-h">Log live from the car</h2></div>
+          <ol class="steps">
+            <li><span class="num">1</span><span>Plug a <b>Tactrix OpenPort 2.0</b> into the OBD port and your computer</span></li>
+            <li><span class="num">2</span><span>Turn the ignition on</span></li>
+            <li><span class="num">3</span><span>Connect, then pick the channels to watch</span></li>
+          </ol>
+          <p class="card-note" id="serial-note" hidden>Connecting needs Chrome or Edge on a desktop computer.</p>
+          <button id="connect-empty" class="btn primary wide">Connect to car</button>
+        </section>
+        <section class="start-card" aria-labelledby="demo-h">
+          <div class="card-head"><span class="card-icon amber"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l6-3.5z"></path></svg></span><h2 id="demo-h">No car handy?</h2></div>
+          <div class="sample-box">
+            <div>The sample is a <b>2012 Forester</b> with a failing front A/F sensor:</div>
+            <div class="tags"><span class="tag warn num">P0171 too lean</span><span class="tag">trim ≈ +35% warming up</span><span class="tag">rear O2 reads rich</span></div>
+          </div>
+          <div class="start-links">
+            <button id="demo-empty" class="btn link-btn"><span><b>Try the live demo</b><small>Replays the sample through an emulated cable and ECU</small></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
+            <button id="sample" class="btn link-btn"><span><b>Open the sample recording</b><small>Browse the whole log in charts and analysis</small></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
+          </div>
+        </section>
+      </div>
+      <div class="privacy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg><span>Everything runs in your browser. Nothing is uploaded.</span></div>
     </div>
   </section>
   <section id="gauges" hidden>
     <div class="gauge-bar">
       <span class="g-rec">
-        <button id="g-play" class="btn small" title="Play the recording (Space)">▶ Play</button>
+        <button id="g-play" class="btn" title="Play the recording (Space)">▶ Play</button>
         <input id="g-slider" type="range" min="0" max="0" value="0" step="1" aria-label="Time in the recording">
         <span id="g-time" class="g-time"></span>
-        <select id="g-speed" aria-label="Playback speed">
+        <select id="g-speed" class="field" aria-label="Playback speed">
           <option value="1">1×</option><option value="2">2×</option><option value="5">5×</option>
           <option value="10">10×</option><option value="30">30×</option>
         </select>
       </span>
-      <span class="g-live">Newest values</span>
+      <h2 class="g-live">Newest values</h2>
       <span class="spacer"></span>
-      <label class="g-layout">Layout <select id="g-layout" title="Saved gauge layouts"></select></label>
-      <button id="g-layout-save" class="btn small" title="Save the gauges shown, their styles and sizes">Save as…</button>
-      <button id="g-layout-del" class="btn small" title="Delete the selected layout" disabled>Delete</button>
-      <button id="g-layout-reset" class="btn small" title="Go back to the standard gauges for this car">Reset to default</button>
-      <button id="g-reset" class="btn small" title="Start the min/max readings again from now">Reset min/max</button>
-      <label class="g-size">Size <select id="g-size">
+      <label class="field-label g-layout">Layout <select id="g-layout" class="field" title="Saved gauge layouts"></select></label>
+      <button id="g-layout-save" class="btn" title="Save the gauges shown, their styles and sizes">Save as…</button>
+      <button id="g-layout-del" class="btn" title="Delete the selected layout" disabled>Delete</button>
+      <button id="g-layout-reset" class="btn" title="Go back to the standard gauges for this car">Reset to default</button>
+      <button id="g-reset" class="btn" title="Start the min/max readings again from now">Reset min/max</button>
+      <label class="field-label g-size">Size <select id="g-size" class="field">
         <option value="s">Small</option><option value="m" selected>Medium</option><option value="l">Large</option>
         <option value="per" title="Pick a size on each gauge">Per gauge</option>
       </select></label>
@@ -122,15 +177,18 @@
   </section>
   </div>
 
-  <aside id="findings" hidden>
+  <aside id="findings" hidden aria-labelledby="findings-title">
     <div class="findings-head">
-      <b id="findings-title">Analysis</b>
-      <span id="counts"></span>
-      <button id="close-findings" class="btn small" aria-label="Close analysis">✕</button>
+      <div class="fh-text">
+        <h2 id="findings-title">Analysis</h2>
+        <div id="findings-meta" class="meta num"></div>
+      </div>
+      <button id="close-findings" class="btn icon-btn ghost" aria-label="Close analysis"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
-    <ol id="finding-list"></ol>
-    <p class="note">Rules of thumb for the engine profile (Tools ▸ Engine) - hints, not a diagnosis.
-      Click a finding to zoom the charts to it.</p>
+    <div id="counts" class="counts"></div>
+    <div id="finding-list"></div>
+    <p class="note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+      <span>Rules of thumb for the engine profile set in <b>Tools › Engine profile</b>: hints, not a diagnosis. Click a finding to zoom the charts to it.</span></p>
   </aside>
 </main>
 
@@ -180,7 +238,7 @@
 
 <dialog id="alert-dialog">
   <div class="dialog-head"><b>Alerts</b></div>
-  <p class="sub">While alerts are on, a red banner shows any rule that is currently true (after its hold
+  <p class="sub">While alerts are on, a banner shows any rule that is currently true (after its hold
     time), with a beep when it starts.</p>
   <table class="rules">
     <thead><tr><th>On</th><th>Channel</th><th></th><th>Value</th><th>Hold (s)</th><th></th></tr></thead>

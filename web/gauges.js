@@ -63,8 +63,12 @@ function drawGauge(canvas, g, c) {
   (draw || drawDigital)(ctx, w, h, g, c);
 }
 
+// Labels in Space Grotesk, numbers in JetBrains Mono (both bundled in web/fonts).
 function font(px, weight = 600) {
-  return `${weight} ${Math.round(px)}px ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif`;
+  return `${weight} ${Math.round(px)}px "Space Grotesk", ui-sans-serif, system-ui, sans-serif`;
+}
+function mono(px, weight = 500) {
+  return `${weight} ${Math.round(px)}px "JetBrains Mono", ui-monospace, Menlo, monospace`;
 }
 
 function drawDial(ctx, w, h, g, c) {
@@ -94,7 +98,7 @@ function drawDial(ctx, w, h, g, c) {
   if (step) {
     ctx.fillStyle = c.muted;
     ctx.strokeStyle = c.muted;
-    ctx.font = font(Math.max(9, r * 0.13), 500);
+    ctx.font = mono(Math.max(9, r * 0.12));
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const n = Math.round((hi - lo) / step);
@@ -142,7 +146,7 @@ function drawDial(ctx, w, h, g, c) {
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = has ? levelColor(c, zoneAt(g.spec, v)) === c.accent ? c.text : col : c.muted;
-  ctx.font = font(r * 0.3, 650);
+  ctx.font = mono(r * 0.3);
   const below = cy + r * 0.62;
   ctx.fillText(fmtNum(v, g.decimals), cx, below);
   ctx.fillStyle = c.muted;
@@ -153,7 +157,7 @@ function drawDial(ctx, w, h, g, c) {
 
 function minMaxLine(ctx, w, y, g, c) {
   if (g.min == null || !Number.isFinite(g.min)) return;
-  ctx.font = font(11, 500);
+  ctx.font = mono(11, 400);
   ctx.fillStyle = c.muted;
   ctx.textBaseline = "alphabetic";
   ctx.textAlign = "left";
@@ -172,7 +176,7 @@ function drawBar(ctx, w, h, g, c) {
   // value
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
-  ctx.font = font(Math.min(h * 0.27, w * 0.2), 650);
+  ctx.font = mono(Math.min(h * 0.27, w * 0.18));
   ctx.fillStyle = !has ? c.muted : level ? col : c.text;
   const vy = h * 0.36;
   ctx.fillText(fmtNum(v, g.decimals), w / 2, vy);
@@ -207,7 +211,7 @@ function drawBar(ctx, w, h, g, c) {
     ctx.globalAlpha = 1;
   }
   // scale labels
-  ctx.font = font(10, 500);
+  ctx.font = mono(10, 400);
   ctx.fillStyle = c.muted;
   ctx.textBaseline = "top";
   const ly = by + bh + 8;
@@ -233,7 +237,7 @@ function drawDigital(ctx, w, h, g, c) {
   const level = zoneAt(g.spec, v);
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
-  ctx.font = font(Math.min(h * 0.32, w * 0.22), 650);
+  ctx.font = mono(Math.min(h * 0.32, w * 0.2));
   ctx.fillStyle = !has ? c.muted : level ? levelColor(c, level) : c.text;
   const vy = h * 0.4;
   ctx.fillText(fmtNum(v, g.decimals), w / 2, vy);
@@ -262,7 +266,7 @@ function drawDigital(ctx, w, h, g, c) {
       ctx.strokeStyle = c.accent;
       ctx.lineWidth = 1.5;
       ctx.stroke();
-      ctx.font = font(9, 500);
+      ctx.font = mono(9, 400);
       ctx.fillStyle = c.muted;
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
