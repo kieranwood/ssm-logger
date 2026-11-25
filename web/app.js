@@ -36,6 +36,7 @@ const state = {
   defsReady: null,     // promise, once live mode has been used
   rec: null,           // {name, channels, t, y, marks, info, findings, live}
   selected: [],        // channel indices, in chart order
+  maxChart: null,      // channel index of the maximised chart, or null
   charts: new Map(),   // channel index -> {u, el, valEl}
   highlight: [],       // [[t0, t1]] shaded on every chart (from the selected finding)
   syncing: false,
@@ -127,6 +128,8 @@ function fmt(v, decimals) {
 }
 
 function showRecording(rec) {
+  state.maxChart = null;
+  document.body.classList.remove("max-chart");
   for (const c of state.charts.values()) c.u.destroy();
   $("charts").replaceChildren();
   state.charts.clear();
@@ -207,6 +210,7 @@ function toggleChannel(i) {
   if (state.view === "gauges") { toggleGauge(state.rec.channels[i].name); return; }
   const at = state.selected.indexOf(i);
   if (at >= 0) {
+    if (state.maxChart === i) maximiseChart(null);
     state.selected.splice(at, 1);
     const c = state.charts.get(i);
     c.u.destroy();
@@ -362,6 +366,12 @@ function addChart(i) {
     `<span class="n"></span><span class="v"></span>`;
   label.querySelector(".n").textContent = ch.name;
   el.appendChild(label);
+  const maxBtn = document.createElement("button");
+  maxBtn.className = "chart-max";
+  maxBtn.addEventListener("click", () => maximiseChart(state.maxChart === i ? null : i));
+  el.appendChild(maxBtn);
+  el.classList.toggle("maxed", state.maxChart === i);
+  setMaxButton(maxBtn, state.maxChart === i);
   chartDragToMove(el, label.querySelector(".grip"), i);
 
   // keep charts in selection order
@@ -374,7 +384,7 @@ function addChart(i) {
   const existing = [...state.charts.values()][0];
   const opts = {
     width: chartWidth(),
-    height: CHART_HEIGHT,
+    height: chartHeight(i),
     legend: { show: false },
     cursor: { sync: { key: "ssm" }, drag: { x: true, y: false }, points: { size: 6 } },
     scales: { x: { time: false } },
@@ -453,6 +463,7 @@ function showFindings(fs = state.rec.findings, title = "Analysis") {
     list.appendChild(li);
   });
   $("findings").hidden = false;
+  if (state.maxChart != null) maximiseChart(null);     // the findings panel needs the room
   resizeCharts();
 }
 
@@ -1258,8 +1269,35 @@ async function createReport() {
 
 function resizeCharts() {
   const w = chartWidth();
-  for (const c of state.charts.values()) c.u.setSize({ width: w, height: CHART_HEIGHT });
+  for (const [i, c] of state.charts) c.u.setSize({ width: w, height: chartHeight(i) });
 }
+
+/** A maximised chart fills the chart area; the others keep the standard height. */
+function chartHeight(i) {
+  return state.maxChart === i ? Math.max(CHART_HEIGHT, $("charts").clientHeight - 1) : CHART_HEIGHT;
+}
+
+function setMaxButton(btn, maxed) {
+  btn.textContent = maxed ? "⤡ Restore" : "⤢";
+  btn.title = maxed ? "Restore all charts (Esc)" : "Maximise this chart";
+  btn.setAttribute("aria-label", btn.title);
+}
+
+/** Show one chart filling the window (i), or all of them again (null). Zoom and cursor carry over. */
+function maximiseChart(i) {
+  if (i != null && !state.charts.has(i)) i = null;
+  state.maxChart = i;
+  document.body.classList.toggle("max-chart", i != null);
+  for (const [j, c] of state.charts) {
+    c.el.classList.toggle("maxed", j === i);
+    setMaxButton(c.el.querySelector(".chart-max"), j === i);
+  }
+  resizeCharts();
+  if (i != null) $("charts").scrollTop = 0;
+  else state.charts.get(lastMaxed)?.el.scrollIntoView({ block: "nearest" });
+  lastMaxed = i;
+}
+let lastMaxed = null;
 
 function openFile(file) {
   if (!file) return;
@@ -1687,6 +1725,7 @@ function setView(v) {
   if (!state.rec) return;
   state.view = v;
   const gauges = v === "gauges";
+  if (gauges && state.maxChart != null) maximiseChart(null);
   $("charts").hidden = gauges;
   $("gauges").hidden = !gauges;
   $("view").textContent = gauges ? "Charts" : "Gauges";
@@ -1851,7 +1890,8 @@ $("window").addEventListener("change", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (!state.rec || e.target.closest("input:not([type=range]), select, textarea, dialog")) return;
+  if (!state.rec || e.target.closest?.("input:not([type=range]), select, textarea, dialog")) return;
+  if (e.key === "Escape" && state.maxChart != null) { maximiseChart(null); return; }
   if (e.key === "g" || e.key === "G") { setView(state.view === "gauges" ? "charts" : "gauges"); return; }
   if (!state.rec.live) {
     if (e.key === " " && state.view === "gauges") { e.preventDefault(); gv.playing ? stopPlay() : startPlay(); }

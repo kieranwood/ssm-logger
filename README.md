@@ -15,7 +15,8 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
 - **Live logging** of every SSM parameter the ECU reports as supported, charted in real
   time and recorded to `logs/ssm_YYYYMMDD_HHMMSS.csv`. Press **M** to drop numbered markers
   (handy while wiggling connectors), **Space** to pause and scroll back. Drag a chart by the ⠿
-  grip in its title to move it up or down.
+  grip in its title to move it up or down. Click **⤢** on a chart to maximise it, so it fills the window while
+  you focus on that sensor (**Esc** or **⤡ Restore** brings the others back).
 - **Gauges** (the Gauges button, or **G**): a glanceable alternative to the charts. Each channel
   gets the gauge that suits it - a needle for revs, speed, coolant and boost, a centre bar for fuel
   trims and AFR, a bar for throttle, voltage and airflow, a big number with a one-minute trend,

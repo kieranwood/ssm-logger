@@ -184,6 +184,18 @@ body:not(.live) .g-live { display: none; }
   user-select: none; }
 .chart .label .grip:hover { color: var(--text); }
 .chart.dragging { opacity: 0.4; }
+.chart-max {
+  position: absolute; right: 8px; top: 2px; z-index: 2; padding: 0 6px; font-size: 15px; line-height: 20px;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--chart-bg); color: var(--muted);
+  cursor: pointer; opacity: 0; transition: opacity 0.1s;
+}
+.chart:hover .chart-max, .chart-max:focus-visible, .chart.maxed .chart-max { opacity: 1; }
+.chart-max:hover { color: var(--text); }
+@media (hover: none) { .chart-max { opacity: 1; } }
+/* one chart maximised: it fills the window; the channel list, Analysis panel and other charts step aside */
+body.max-chart #side, body.max-chart #findings, body.max-chart .chart:not(.maxed) { display: none; }
+body.max-chart .chart.maxed { border-bottom: 0; }
+body.max-chart .chart .label .grip { display: none; }
 .chart.drop-before::before, .chart.drop-after::after {
   content: ""; position: absolute; left: 0; right: 0; height: 3px; z-index: 3; background: var(--accent);
   pointer-events: none;

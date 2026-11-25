@@ -175,7 +175,20 @@ class ScrollingPlots(pg.GraphicsLayoutWidget):
             return None
         return best[0], pos.y() > best[1].center().y()
 
+    def _max_button_at(self, pos: QtCore.QPointF) -> int | None:
+        for i, (p, _, _) in self.win.plots.items():
+            b = getattr(p, "_max_item", None)
+            if b is not None and b.sceneBoundingRect().adjusted(-4, -3, 4, 3).contains(pos):
+                return i
+        return None
+
     def mousePressEvent(self, ev) -> None:
+        if ev.button() == QtCore.Qt.LeftButton:
+            i = self._max_button_at(self._scene_pos(ev))
+            if i is not None:
+                ev.accept()
+                QtCore.QTimer.singleShot(0, lambda: self.win.maximise_chart(None if self.win.max_chart == i else i))
+                return
         if ev.button() == QtCore.Qt.LeftButton and len(self.win.plots) > 1:
             i = self._title_at(self._scene_pos(ev))
             if i is not None:
@@ -189,7 +202,9 @@ class ScrollingPlots(pg.GraphicsLayoutWidget):
         pos = self._scene_pos(ev)
         if self._moving is None:
             over = len(self.win.plots) > 1 and self._title_at(pos) is not None
-            if over:
+            if self._max_button_at(pos) is not None:
+                self.viewport().setCursor(QtCore.Qt.PointingHandCursor)
+            elif over:
                 self.viewport().setCursor(QtCore.Qt.OpenHandCursor)
             else:
                 self.viewport().unsetCursor()
@@ -1086,6 +1101,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.gauge_btn.toggled.connect(self._set_gauges)
         tb.addWidget(self.gauge_btn)
         QtGui.QShortcut(QtGui.QKeySequence("G"), self, activated=self.gauge_btn.toggle)
+        QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Escape), self,
+                        activated=lambda: self.max_chart is not None and self.maximise_chart(None))
         tools = QtWidgets.QToolButton()
         tools.setText("Tools ▾")
         tools.setPopupMode(QtWidgets.QToolButton.InstantPopup)
@@ -1207,6 +1224,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.hint.setStyleSheet("color:#8a94a0;")
         cp.addWidget(self.hint)
 
+        self.side_panel = side
         split = QtWidgets.QSplitter()
         split.addWidget(side)
         split.addWidget(right)
@@ -1244,6 +1262,20 @@ class MainWindow(QtWidgets.QMainWindow):
             colors[i] = next((c for c in COLORS if c not in used), COLORS[len(colors) % len(COLORS)])
         return colors[i]
 
+    max_chart: int | None = None       # channel whose chart fills the window, or None
+
+    def maximise_chart(self, i: int | None) -> None:
+        """Show one chart filling the window (the channel list steps aside too), or all again."""
+        if i is not None and i not in self.selected:
+            i = None
+        self.max_chart = i
+        self.side_panel.setVisible(i is None)
+        self._rebuild_plots()
+        if i is None:
+            self.plot_scroll.verticalScrollBar().setValue(0)
+        else:
+            self.statusBar().showMessage("One chart maximised - Esc or ⤡ Restore shows them all again.", 6000)
+
     def move_chart(self, i: int, target: int, after: bool) -> None:
         """Move channel i's chart to just above (or below) channel target's chart."""
         if i == target or i not in self.selected or target not in self.selected:
@@ -1261,7 +1293,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.glw.clear()
         self.plots.clear()
         first = None
-        for k, i in enumerate(self.selected):
+        shown = [self.max_chart] if self.max_chart in self.selected else self.selected
+        for k, i in enumerate(shown):
             c = self.channels[i]
             p = self.glw.addPlot(row=k, col=0)
             p.showGrid(x=True, y=True, alpha=0.2)
@@ -1274,7 +1307,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 p.sigXRangeChanged.connect(self._xrange_changed)
             else:
                 p.setXLink(first)
-            if k < len(self.selected) - 1:
+            if k < len(shown) - 1:
                 p.getAxis("bottom").setStyle(showValues=False)
             else:
                 p.setLabel("bottom", "time", "s")
@@ -1291,6 +1324,14 @@ class MainWindow(QtWidgets.QMainWindow):
             title.setParentItem(p.vb)
             title.setPos(6, 2)
             p._title_item = title
+            maxed = self.max_chart == i
+            max_item = pg.TextItem("⤡ Restore" if maxed else "⤢", anchor=(1, 0),
+                                   color="#d0d6de" if maxed else "#8a94a0",
+                                   border=pg.mkPen("#3a4049"), fill=pg.mkBrush(17, 20, 24, 220))
+            max_item.setToolTip("Restore all charts (Esc)" if maxed else "Maximise this chart")
+            max_item.setParentItem(p.vb)
+            p._max_item = max_item
+            p.vb.sigResized.connect(lambda vb, it=max_item: it.setPos(vb.width() - 6, 4))
             if c.name in ("Air/Fuel Correction #1", "Total Fuel Trim"):
                 p.addLine(y=10, pen=pg.mkPen("#e5484d", style=QtCore.Qt.DashLine))
                 p.addLine(y=-10, pen=pg.mkPen("#e5484d", style=QtCore.Qt.DashLine))
@@ -1301,7 +1342,8 @@ class MainWindow(QtWidgets.QMainWindow):
             p.addItem(cursor, ignoreBounds=True)
             self.plots[i] = (p, curve, cursor)
             self._apply_mode(p, cursor)
-        self.glw.setMinimumHeight(max(1, len(self.selected)) * 110)
+        # maximised: the one chart fills the scroll area (no minimum beyond what fits)
+        self.glw.setMinimumHeight(200 if self.max_chart is not None else max(1, len(self.selected)) * 110)
         self._refresh_curves()
         if old_range and self._first:
             self._first.setXRange(*old_range, padding=0)
@@ -1537,6 +1579,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.table.blockSignals(False)
 
     def _set_gauges(self, on: bool) -> None:
+        if on and self.max_chart is not None:
+            self.maximise_chart(None)
         self.stack.setCurrentIndex(1 if on else 0)
         self._sync_checks()
         if on:
