@@ -101,6 +101,11 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
       <input id="filter" class="field" type="search" placeholder="Filter channels…" disabled>
     </label>
+    <div id="ch-sort" class="seg-group" role="group" aria-label="Sort channels">
+      <button class="seg" type="button" data-sort="recorded" aria-pressed="true">Recorded</button>
+      <button class="seg" type="button" data-sort="groups" aria-pressed="false">Grouped</button>
+      <button class="seg" type="button" data-sort="az" aria-pressed="false">A–Z</button>
+    </div>
     <div id="channels"></div>
   </aside>
 

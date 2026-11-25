@@ -196,9 +196,97 @@ function colorFor(idx) {
   return P[colorOf.get(idx)];
 }
 
-function buildChannelList() {
-  const list = $("channels");
+// ---- channel list: in recorded order, grouped by what they measure, or A-Z
+let chRows = [];
+const CH_SORT_KEY = "ssm-logger.channelSort", CH_COLLAPSED_KEY = "ssm-logger.channelGroupsClosed";
+// first match wins, so the more specific patterns come first
+const CH_GROUPS = [
+  ["Valve timing", /\b(OCV|AVCS|VVT|cam|valve timing)\b/i],
+  ["Air intake", /mass air flow|air flow sensor|manifold|atmospheric|intake air|boost|wastegate|turbo|barometric/i],
+  ["Fuel & mixture", /fuel|air\/fuel|a\/f|o2 sensor|lambda|injector|cpc|purge|evap/i],
+  ["Engine", /engine speed|engine load|ignition|knock|timing|misfire|roughness|idle/i],
+  ["Driver & vehicle", /vehicle speed|throttle|accelerator|gear|cruise|brake|clutch|neutral|steering/i],
+  ["Cooling & electrical", /coolant|battery|alternator|fan|radiator|voltage|a\/c|oil temp/i],
+];
+function channelGroup(c) {
+  if (c.switch) return "Switches";
+  for (const [g, re] of CH_GROUPS) if (re.test(c.name)) return g;
+  return "Other";
+}
+const loadJSON = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const saveJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
+let chSort = loadJSON(CH_SORT_KEY, "recorded");
+let chClosed = new Set(loadJSON(CH_COLLAPSED_KEY, []));
+
+function arrangeChannels() {
+  const list = $("channels"), chans = state.rec.channels;
+  for (const b of document.querySelectorAll("#ch-sort .seg")) b.setAttribute("aria-pressed", String(b.dataset.sort === chSort));
   list.replaceChildren();
+  const order = chans.map((_, i) => i);
+  if (chSort === "az") order.sort((a, b) => chans[a].name.localeCompare(chans[b].name, "en", { numeric: true }));
+  if (chSort !== "groups") {
+    for (const i of order) list.append(chRows[i]);
+  } else {
+    const names = ["Engine", "Fuel & mixture", "Air intake", "Driver & vehicle", "Valve timing", "Cooling & electrical",
+                   "Switches", "Other"];
+    for (const g of names) {
+      const members = order.filter((i) => channelGroup(chans[i]) === g);
+      if (!members.length) continue;
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "ch-group";
+      head.dataset.group = g;
+      head.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ` +
+        `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>` +
+        `<span class="g-title"></span><span class="g-count num"></span>`;
+      head.querySelector(".g-title").textContent = g;
+      head.addEventListener("click", () => {
+        if (chClosed.has(g)) chClosed.delete(g); else chClosed.add(g);
+        saveJSON(CH_COLLAPSED_KEY, [...chClosed]);
+        applyChannelFilter();
+      });
+      const box = document.createElement("div");
+      box.className = "ch-group-rows";
+      box.dataset.group = g;
+      for (const i of members) box.append(chRows[i]);
+      list.append(head, box);
+    }
+  }
+  applyChannelFilter();
+}
+
+/** Filter text, and collapsed groups (a filter opens every group that has a match). */
+function applyChannelFilter() {
+  const q = $("filter").value.toLowerCase();
+  for (const row of chRows) row.hidden = !!q && !row.dataset.search.includes(q);
+  for (const head of $("channels").querySelectorAll(".ch-group")) {
+    const g = head.dataset.group, box = head.nextElementSibling;
+    const rows = [...box.children], shown = rows.filter((r) => !r.hidden);
+    const open = !!q || !chClosed.has(g);
+    head.hidden = !shown.length;
+    box.hidden = !open || !shown.length;
+    head.setAttribute("aria-expanded", String(open));
+  }
+  updateGroupCounts();
+}
+
+function updateGroupCounts() {
+  for (const head of $("channels").querySelectorAll(".ch-group")) {
+    const rows = [...head.nextElementSibling.children];
+    head.querySelector(".g-count").textContent = `${rows.filter((r) => r.classList.contains("on")).length}/${rows.length}`;
+  }
+}
+
+for (const b of document.querySelectorAll("#ch-sort .seg")) {
+  b.addEventListener("click", () => {
+    chSort = b.dataset.sort;
+    saveJSON(CH_SORT_KEY, chSort);
+    if (state.rec) arrangeChannels();
+  });
+}
+
+function buildChannelList() {
+  chRows = [];
   state.rec.channels.forEach((c, i) => {
     const row = document.createElement("div");
     row.className = "ch";
@@ -216,13 +304,14 @@ function buildChannelList() {
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleChannel(i); }
     });
     row.addEventListener("click", () => toggleChannel(i));
-    list.appendChild(row);
+    chRows[i] = row;
   });
+  arrangeChannels();
   refreshChannelList();
 }
 
 function refreshChannelList() {
-  for (const row of $("channels").children) {
+  for (const row of $("channels").querySelectorAll(".ch")) {
     const i = Number(row.dataset.idx);
     const gauges = state.view === "gauges";
     const on = gauges ? gv.sel.includes(state.rec.channels[i].name) : state.selected.includes(i);
@@ -230,6 +319,7 @@ function refreshChannelList() {
     row.setAttribute("aria-pressed", String(on));
     row.style.setProperty("--ch", !on ? "transparent" : gauges ? "var(--accent)" : colorFor(i));
   }
+  updateGroupCounts();
   const n = state.view === "gauges" ? gv.sel.length : state.selected.length;
   $("ch-count").textContent = `${n} ${state.view === "gauges" ? "shown" : "charted"}`;
   updateValues();
@@ -312,7 +402,7 @@ function updateValues() {
     const [, x1] = visibleRange();
     idx = Number.isFinite(x1) ? Math.max(0, Math.min(n - 1, bsearch(rec.t, x1 + 1e-9) - 1)) : n - 1;
   }
-  for (const row of $("channels").children) {
+  for (const row of $("channels").querySelectorAll(".ch")) {
     const i = Number(row.dataset.idx);
     const v = idx == null ? null : rec.y[i][idx];
     row.querySelector(".val").textContent = fmt(v, rec.channels[i].decimals);
@@ -1758,10 +1848,7 @@ $("close-findings").addEventListener("click", () => {
   resizeCharts();
 });
 $("reset").addEventListener("click", resetZoom);
-$("filter").addEventListener("input", (e) => {
-  const q = e.target.value.toLowerCase();
-  for (const row of $("channels").children) row.hidden = q && !row.dataset.search.includes(q);
-});
+$("filter").addEventListener("input", applyChannelFilter);
 window.addEventListener("resize", resizeCharts);
 
 $("sample").addEventListener("click", () => openUrl(SAMPLE_URL));

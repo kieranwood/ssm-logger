@@ -348,6 +348,19 @@ main { flex: 1; display: flex; gap: 20px; min-height: 0; padding: 20px 24px; }
 .search { position: relative; display: block; margin: 0 4px; }
 .search svg { position: absolute; left: 12px; top: 14px; color: var(--muted); pointer-events: none; }
 #filter { width: 100%; height: 44px; border-radius: 10px; padding-left: 36px; }
+#ch-sort { display: flex; margin: 10px 4px 0; }
+#ch-sort .seg { flex: 1 1 0; justify-content: center; padding: 0 8px; }
+.ch-group {
+  width: 100%; min-height: 40px; margin-top: 6px; display: flex; align-items: center; gap: 12px; padding: 0 10px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; text-align: left;
+  font: 600 11px var(--font); letter-spacing: 0.08em; text-transform: uppercase;
+}
+.ch-group:hover { background: var(--raised); color: var(--text); }
+.ch-group svg { flex: none; transition: transform 0.2s; }
+.ch-group[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.ch-group .g-title { flex: 1 1 auto; }
+.ch-group .g-count { font-weight: 400; letter-spacing: 0; text-transform: none; }
+.ch-group-rows { display: flex; flex-direction: column; gap: 2px; }
 #channels { overflow-y: auto; flex: 1; margin-top: 10px; display: flex; flex-direction: column; gap: 2px; }
 .ch {
   min-height: 40px; display: flex; align-items: center; gap: 12px; padding: 0 10px; border-radius: 8px;
