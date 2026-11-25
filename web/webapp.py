@@ -33,7 +33,8 @@ def _clean(v):
 
 
 def _finding_dicts(findings) -> list[dict]:
-    return [{"level": f.level, "title": f.title, "detail": f.detail,
+    return [{"level": f.level, "title": f.title, "detail": f.detail, "short": f.short, "metric": f.metric,
+             "channels": list(f.channels),
              "times": [[_clean(float(a)), _clean(float(b))] for a, b in f.times],
              "when": analyse._fmt_ranges(f.times, limit=12) if f.times else ""}
             for f in findings]

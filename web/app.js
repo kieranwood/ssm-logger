@@ -883,29 +883,47 @@ const LEVELS = {
   ok: { title: "Looks fine", label: "OK", icon: '<circle cx="12" cy="12" r="9"></circle><path d="M8 12l3 3 5-6"></path>' },
 };
 
+let findingFilter = "all";
+
 function showFindings(fs = state.rec.findings, title = "Analysis") {
+  if ($("findings-title").textContent !== title) findingFilter = "all";
   $("findings-title").textContent = title;
   const rec = state.rec, n = rec.t.length;
   const meta = [n ? `${((rec.t[n - 1] - rec.t[0]) / 60).toFixed(1)} min` : "", `${n.toLocaleString("en")} rows`];
   $("findings-meta").replaceChildren(...meta.filter(Boolean).map((t) => Object.assign(document.createElement("span"), { textContent: t })));
-  const counts = {};
+  const counts = { all: fs.length };
   for (const f of fs) counts[f.level] = (counts[f.level] || 0) + 1;
-  $("counts").replaceChildren(...Object.keys(LEVELS).filter((lv) => counts[lv]).map((lv) => {
-    const c = document.createElement("span");
+  if (!counts[findingFilter]) findingFilter = "all";
+  // filter chips: All + one per level that has findings; tapping one shows just that level
+  const chips = ["all", ...Object.keys(LEVELS).filter((lv) => counts[lv])];
+  $("counts").style.gridTemplateColumns = `repeat(${Math.max(chips.length, 4)}, minmax(0, 1fr))`;
+  $("counts").replaceChildren(...chips.map((lv) => {
+    const c = document.createElement("button");
+    c.type = "button";
     c.className = `count lv-${lv}`;
+    c.setAttribute("aria-pressed", String(findingFilter === lv));
     c.innerHTML = `<b class="num"></b><span></span>`;
     c.querySelector("b").textContent = counts[lv];
-    c.querySelector("span").textContent = LEVELS[lv].label;
+    c.querySelector("span").textContent = lv === "all" ? "All" : LEVELS[lv].label;
+    c.addEventListener("click", () => {
+      findingFilter = findingFilter === lv ? "all" : lv;
+      for (const el of $("counts").children) el.setAttribute("aria-pressed", String(el === c && findingFilter === lv));
+      if (findingFilter === "all") $("counts").firstChild.setAttribute("aria-pressed", "true");
+      for (const sec of $("finding-list").children) sec.hidden = findingFilter !== "all" && sec.dataset.level !== findingFilter;
+    });
     return c;
   }));
 
   const list = $("finding-list");
   list.replaceChildren();
+  const names = new Map(rec.channels.map((c, i) => [c.name, i]));
   for (const lv of Object.keys(LEVELS)) {
     const group = fs.filter((f) => f.level === lv);
     if (!group.length) continue;
     const sec = document.createElement("section");
     sec.className = `f-group lv-${lv}`;
+    sec.dataset.level = lv;
+    sec.hidden = findingFilter !== "all" && findingFilter !== lv;
     sec.innerHTML = `<h3>${LEVELS[lv].title} <span class="num"></span></h3><ol></ol>`;
     sec.querySelector("h3 span").textContent = group.length;
     for (const f of group) {
@@ -914,18 +932,39 @@ function showFindings(fs = state.rec.findings, title = "Analysis") {
       li.innerHTML = `<button class="f-row" type="button" aria-expanded="false">` +
         `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ` +
         `stroke-linejoin="round" aria-hidden="true" class="f-icon">${LEVELS[lv].icon}</svg>` +
-        `<span class="title"></span>` +
+        `<span class="title"></span><span class="f-metric num"></span>` +
         `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" ` +
         `stroke-linejoin="round" aria-hidden="true" class="chev"><path d="M6 9l6 6 6-6"></path></svg></button>` +
-        `<div class="detail"></div>`;
-      li.querySelector(".title").textContent = f.title;
-      li.querySelector(".detail").textContent = f.detail;
+        `<div class="detail"><p></p></div>`;
+      li.querySelector(".title").textContent = f.short || f.title;
+      const badge = li.querySelector(".f-metric");
+      if (f.metric) { badge.textContent = f.metric; badge.title = f.title; } else badge.remove();
+      const detail = li.querySelector(".detail");
+      if (f.detail) detail.querySelector("p").textContent = f.detail; else detail.querySelector("p").remove();
       if (f.when) {
         const w = document.createElement("div");
         w.className = "when num";
         w.textContent = `When: ${f.when}`;
-        li.querySelector(".detail").appendChild(w);
+        detail.appendChild(w);
       }
+      const chs = (f.channels || []).filter((c) => names.has(c));
+      if (chs.length) {
+        const tags = document.createElement("div");
+        tags.className = "f-channels";
+        for (const c of chs) tags.append(Object.assign(document.createElement("span"), { className: "f-ch", textContent: c }));
+        detail.appendChild(tags);
+      }
+      if (chs.length || f.times?.length) {
+        const go = document.createElement("button");
+        go.type = "button";
+        go.className = "f-show";
+        go.innerHTML = `<span></span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+          `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg>`;
+        go.querySelector("span").textContent = chs.length ? "Show in charts" : "Show on charts";
+        go.addEventListener("click", () => showFindingInCharts(f, chs.map((c) => names.get(c))));
+        detail.appendChild(go);
+      }
+      li._f = f;
       li.querySelector(".f-row").addEventListener("click", () => selectFinding(li, f));
       sec.querySelector("ol").append(li);
     }
@@ -936,8 +975,18 @@ function showFindings(fs = state.rec.findings, title = "Analysis") {
   resizeCharts();
 }
 
-function selectFinding(li, f) {
+// "Show in charts": chart the finding's channels (adding any that aren't charted) and zoom to its times
+function showFindingInCharts(f, idx) {
   if (state.view === "gauges") setView("charts");
+  const missing = idx.filter((i) => !state.selected.includes(i));
+  for (const i of missing) toggleChannel(i);
+  const first = idx.length ? state.charts.get(idx[0]) ?? state.charts.get("overlay") : null;
+  const li = [...$("finding-list").querySelectorAll("li")].find((el) => el._f === f);
+  if (li && !li.classList.contains("sel")) selectFinding(li, f);
+  if (first) first.el.scrollIntoView({ block: "nearest", behavior: REDUCED_MOTION.matches ? "auto" : "smooth" });
+}
+
+function selectFinding(li, f) {
   const was = li.classList.contains("sel");
   for (const el of $("finding-list").querySelectorAll("li")) {
     el.classList.remove("sel");

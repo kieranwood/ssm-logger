@@ -14,6 +14,7 @@ idle airflow, boost...) come from an engine profile, see profiles.py.
 from __future__ import annotations
 
 import math
+import re
 import sys
 from dataclasses import dataclass, field
 
@@ -38,6 +39,18 @@ class Finding:
     title: str
     detail: str
     times: list[tuple[float, float]] = field(default_factory=list)
+    metric: str = ""            # the key value, shown as a badge next to `short` in the web app
+    channels: tuple[str, ...] = ()   # the channels it is based on
+    short: str = ""             # the title without the value (defaults to `title`)
+
+    def __post_init__(self):
+        if not self.metric:     # "Something (peak 15.8 AFR)" -> badge "peak 15.8 AFR"
+            m = re.fullmatch(r"(.+) \(([^()]*\d[^()]*)\)", self.title)
+            if m:
+                self.short, self.metric = m.group(1), m.group(2)
+        elif not self.short and self.title.endswith(f" ({self.metric})"):
+            self.short = self.title[: -len(self.metric) - 3]
+        self.short = self.short or self.title
 
 
 class Log:
@@ -107,6 +120,14 @@ def _states(L: Log, P: Profile = profiles.DEFAULT) -> dict[str, np.ndarray]:
     return dict(running=running, fuel_cut=fuel_cut, closed=closed, warm=warm, cold=cold, idle=idle)
 
 
+AFR = "Air/Fuel Sensor #1 AFR"
+BATT, COOL, MRP = ("Battery Voltage",), ("Coolant Temperature",), ("Manifold Relative Pressure",)
+
+
+def _times(n: int) -> str:
+    return f"{n} time{'s' if n != 1 else ''}"
+
+
 CUT_MIN_S = 0.4        # fuel cuts shorter than this aren't judged
 AFR_FAIL, AFR_GOOD = 16.0, 18.0   # peak AFR after a cut: below FAIL barely reacted, GOOD is healthy
 
@@ -141,21 +162,26 @@ def afr_response_findings(L: Log, S) -> list[Finding]:
     out = []
     if worst < AFR_FAIL:
         out.append(Finding(PROBLEM, f"Front A/F sensor barely reacted to a fuel cut (peak {worst:.1f} AFR)",
-                           detail + " Sensor, heater or wiring.", weak))
+                           detail + " Sensor, heater or wiring.", weak, channels=(AFR,)))
     elif worst < AFR_GOOD:
         out.append(Finding(WARNING, f"Front A/F sensor reacted weakly to a fuel cut (peak {worst:.1f} AFR)",
-                           detail, weak))
+                           detail, weak, channels=(AFR,)))
     else:
-        out.append(Finding(OK, f"Front A/F sensor swung to {worst:.1f} AFR or more in every fuel cut", detail, cuts))
+        out.append(Finding(OK, f"Front A/F sensor swung to {worst:.1f} AFR or more in every fuel cut", detail, cuts,
+                           metric=f"≥ {worst:.1f} AFR", short="Front A/F sensor swung lean in every fuel cut",
+                           channels=(AFR,)))
     slow = max(d for _, _, _, d in resp)
     if math.isfinite(slow):                      # a cut that never got lean is already reported above
         if slow > 2.0:
-            out.append(Finding(PROBLEM, f"Slow A/F sensor response: {slow:.1f} s to pass {AFR_FAIL:g} AFR", detail, cuts))
+            out.append(Finding(PROBLEM, f"Slow A/F sensor response: {slow:.1f} s to pass {AFR_FAIL:g} AFR", detail, cuts,
+                               metric=f"{slow:.1f} s", short="Slow A/F sensor response", channels=(AFR,)))
         elif slow > 1.0:
             out.append(Finding(WARNING, f"Sluggish A/F sensor response: {slow:.1f} s to pass {AFR_FAIL:g} AFR",
-                               detail, cuts))
+                               detail, cuts, metric=f"{slow:.1f} s", short="Sluggish A/F sensor response",
+                               channels=(AFR,)))
         else:
-            out.append(Finding(OK, f"Quick A/F sensor response: {slow:.2f} s to pass {AFR_FAIL:g} AFR", detail, cuts))
+            out.append(Finding(OK, f"Quick A/F sensor response: {slow:.2f} s to pass {AFR_FAIL:g} AFR", detail, cuts,
+                               metric=f"{slow:.2f} s", short="Quick A/F sensor response", channels=(AFR,)))
     return out
 
 
@@ -166,6 +192,7 @@ def check_trims(L: Log, S, P: Profile) -> list[Finding]:
     stft = L["Air/Fuel Correction #1"]
     ltft = L["Air/Fuel Learning #1"] if L.has("Air/Fuel Learning #1") else np.zeros_like(stft)
     total = stft + ltft
+    trim_ch = ("Air/Fuel Correction #1",) + (("Air/Fuel Learning #1",) if L.has("Air/Fuel Learning #1") else ())
     cl = S["closed"]
     if L.duration(cl) < 20:
         return [Finding(INFO, "Not enough closed-loop data for fuel trim checks",
@@ -177,30 +204,37 @@ def check_trims(L: Log, S, P: Profile) -> list[Finding]:
     m = _mean(total, mask)
     lean = L.runs(cl & (total > 15), min_s=5)
     rich = L.runs(cl & (total < -15), min_s=5)
+    avg = dict(metric=f"avg {m:+.1f}%", short=f"Total fuel trim, {label}", channels=trim_ch)
     if m > 10 or m < -10:
         side = "lean (ECU adding fuel)" if m > 0 else "rich (ECU removing fuel)"
         out.append(Finding(PROBLEM, f"Total fuel trim averages {m:+.1f}% ({label})",
                            f"Beyond ±10% means the engine runs {side}. Healthy is within about ±5%.",
-                           lean or rich))
+                           lean or rich, **avg))
     elif m > 5 or m < -5:
         out.append(Finding(WARNING, f"Total fuel trim averages {m:+.1f}% ({label})",
-                           "Within the ECU's range but higher than a healthy ±5%.", lean or rich))
+                           "Within the ECU's range but higher than a healthy ±5%.", lean or rich, **avg))
     else:
-        out.append(Finding(OK, f"Total fuel trim averages {m:+.1f}% ({label})", "Within ±5%."))
+        out.append(Finding(OK, f"Total fuel trim averages {m:+.1f}% ({label})", "Within ±5%.", **avg))
     if lean:
         out.append(Finding(WARNING, f"Lean trim above +15% for {len(lean)} stretch(es) of 5 s or more",
-                           f"At {_fmt_ranges(lean)}.", lean))
+                           f"At {_fmt_ranges(lean)}.", lean, metric=_times(len(lean)),
+                           short="Lean trim above +15% for 5 s or more", channels=trim_ch))
     if rich:
         out.append(Finding(WARNING, f"Rich trim below −15% for {len(rich)} stretch(es) of 5 s or more",
-                           f"At {_fmt_ranges(rich)}.", rich))
+                           f"At {_fmt_ranges(rich)}.", rich, metric=_times(len(rich)),
+                           short="Rich trim below −15% for 5 s or more", channels=trim_ch))
 
     lt = _mean(ltft, S["running"])
     if abs(lt) > 10:
         out.append(Finding(PROBLEM, f"Long-term fuel learning is {lt:+.1f}%",
-                           "The ECU has learnt a large permanent correction - the fault is not just momentary."))
+                           "The ECU has learnt a large permanent correction - the fault is not just momentary.",
+                           metric=f"{lt:+.1f}%", short="Long-term fuel learning is large",
+                           channels=("Air/Fuel Learning #1",)))
     elif abs(lt) > 5:
         out.append(Finding(WARNING, f"Long-term fuel learning is {lt:+.1f}%",
-                           "A moderate learnt correction. Within ±5% is typical."))
+                           "A moderate learnt correction. Within ±5% is typical.",
+                           metric=f"{lt:+.1f}%", short="Long-term fuel learning is high",
+                           channels=("Air/Fuel Learning #1",)))
 
     # warm-up dependence
     if L.has("Coolant Temperature"):
@@ -208,6 +242,7 @@ def check_trims(L: Log, S, P: Profile) -> list[Finding]:
         cold_s, warm_s = L.duration(cl & S["cold"]), L.duration(cl & S["warm"])
         if cold_s >= 15 and warm_s >= 15:
             diff = cold_m - warm_m
+            wu = dict(channels=trim_ch + ("Coolant Temperature",))
             text = (f"Closed-loop trim is {cold_m:+.1f}% below {P.cold_c:.0f}°C coolant and "
                     f"{warm_m:+.1f}% above {P.warm_c:.0f}°C.")
             if diff > 8:
@@ -216,13 +251,14 @@ def check_trims(L: Log, S, P: Profile) -> list[Finding]:
                                    "seals with heat: an exhaust leak before the front A/F sensor (manifold, "
                                    "up-pipe gasket, loose sensor), or a cold-only intake leak. A coolant "
                                    "sensor reading wrong would also do this.",
-                                   L.runs(cl & S["cold"] & (total > 15), min_s=2)))
+                                   L.runs(cl & S["cold"] & (total > 15), min_s=2), **wu, metric="cold only"))
             elif diff < -8:
                 out.append(Finding(WARNING, "Engine runs leaner once warm", text +
                                    " A fault that grows with heat suggests fuel delivery (pump, "
-                                   "regulator, injectors) or a leak that opens up when hot."))
+                                   "regulator, injectors) or a leak that opens up when hot.", **wu, metric="warm only"))
             else:
-                out.append(Finding(OK, "Fuel trim doesn't depend on engine temperature", text))
+                out.append(Finding(OK, "Fuel trim doesn't depend on engine temperature", text, **wu,
+                                   metric=f"Δ {diff:+.1f}%"))
 
     # load dependence
     if L.has("Mass Air Flow"):
@@ -236,17 +272,18 @@ def check_trims(L: Log, S, P: Profile) -> list[Finding]:
         if len(rows) >= 2:
             table = "; ".join(f"{n}: {v:+.1f}%" for n, v, _ in rows)
             lo, hi = rows[0][1], rows[-1][1]
+            byflow = dict(channels=trim_ch + ("Mass Air Flow",), metric=f"{lo:+.0f}% → {hi:+.0f}%")
             if lo - hi > 8 and lo > 8:
                 out.append(Finding(WARNING, "Lean at low airflow, better at higher airflow",
                                    f"{table}. A fixed leak matters most when airflow is small - classic for "
                                    "an unmetered air leak after the MAF (vacuum or intake), or an exhaust leak "
-                                   "ahead of the A/F sensor."))
+                                   "ahead of the A/F sensor.", **byflow))
             elif hi - lo > 8 and hi > 8:
                 out.append(Finding(WARNING, "Lean at high airflow, fine at low airflow",
                                    f"{table}. Points to fuel supply (weak pump, clogged filter, regulator) or "
-                                   "a MAF under-reading at high flow."))
+                                   "a MAF under-reading at high flow.", **byflow))
             else:
-                out.append(Finding(INFO, "Fuel trim by airflow", table))
+                out.append(Finding(INFO, "Fuel trim by airflow", table, channels=byflow["channels"], metric="breakdown"))
     return out
 
 
@@ -265,7 +302,7 @@ def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
             out.append(Finding(INFO, "Front A/F sensor reading hardly moves in this log",
                                f"It spans only {spread:.2f} AFR. In closed loop the ECU holds it on target, so "
                                "a flat line there is normal. Lifting off at speed (a fuel cut) is the "
-                               "easy way to see it respond."))
+                               "easy way to see it respond.", metric=f"{spread:.2f} AFR span", channels=(AFR,)))
 
     if L.has("Rear O2 Sensor"):
         o2 = L["Rear O2 Sensor"]
@@ -273,6 +310,7 @@ def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
         if L.duration(mask) >= 30:
             med = float(np.nanmedian(o2[mask]))
             rich_t = L.runs(mask & (o2 > 0.8), min_s=10)
+            o2ch = ("Rear O2 Sensor",) + ((AFR,) if has_front else ())
             front = (f" while the front sensor averages {_mean(L['Air/Fuel Sensor #1 AFR'], mask):.2f} AFR"
                      if has_front else "")
             if med > 0.8:
@@ -280,19 +318,25 @@ def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
                                    f"After the catalyst the exhaust reads rich{front}. If the front sensor shows "
                                    "stoich or lean at the same time, it is seeing extra oxygen the engine "
                                    "didn't burn - usually an exhaust leak before it, or a biased front sensor. "
-                                   "The ECU then adds fuel the engine doesn't need.", rich_t))
+                                   "The ECU then adds fuel the engine doesn't need.", rich_t, channels=o2ch))
             elif med < 0.2:
                 out.append(Finding(PROBLEM, f"Rear O2 sensor says lean most of the time (median {med:.2f} V)",
                                    "Engine genuinely lean after the catalyst, or an exhaust leak near the "
-                                   "rear sensor, or a failed rear sensor."))
+                                   "rear sensor, or a failed rear sensor.", channels=o2ch))
             else:
                 out.append(Finding(OK, f"Rear O2 sensor median {med:.2f} V in closed loop",
-                                   "Switching around the 0.45–0.75 V range is normal."))
+                                   "Switching around the 0.45–0.75 V range is normal.", metric=f"median {med:.2f} V",
+                                   short="Rear O2 sensor reads normally in closed loop", channels=o2ch))
         lo = float(np.nanmin(o2[S["running"]])) if S["running"].any() else np.nan
         if L.duration(S["fuel_cut"]) >= 2 and lo > 0.3:
             out.append(Finding(WARNING, "Rear O2 sensor never went lean",
                                f"Lowest reading {lo:.2f} V despite fuel cuts; a healthy sensor drops below "
-                               "0.2 V. Sensor may be slow or stuck."))
+                               "0.2 V. Sensor may be slow or stuck.", metric=f"min {lo:.2f} V",
+                               channels=("Rear O2 Sensor",)))
+
+    def c3f(metric):
+        return dict(metric=metric, short="Rear-sensor correction (A/F Correction #3)",
+                    channels=("Air/Fuel Correction #3",))
 
     if L.has("Air/Fuel Correction #3") and P.c3_rest is None:
         c3 = L["Air/Fuel Correction #3"]
@@ -300,7 +344,7 @@ def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
             med = float(np.nanmedian(c3[S["running"]]))
             out.append(Finding(INFO, f"Rear-sensor correction (A/F Correction #3) median {med:+.0f}%",
                                "Where this value normally rests isn't known for this engine, so it isn't "
-                               "judged; rely on the fuel trims and rear O2 voltage."))
+                               "judged; rely on the fuel trims and rear O2 voltage.", **c3f(f"median {med:+.0f}%")))
     elif L.has("Air/Fuel Correction #3"):
         # On the FB25 ECU the value rests around -50%, not 0: it reads -50% at key-on before the rear
         # sensor is warm, and with a healthy front sensor it swings either side of -50% no matter
@@ -314,11 +358,12 @@ def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
                 out.append(Finding(WARNING, f"Rear-sensor correction (A/F Correction #3) sits at {med:+.0f}%",
                                    f"That is {off:+.0f} points from its usual resting value of about "
                                    f"{P.c3_rest:+.0f}%. Treat as a hint only - the exact meaning and limits of "
-                                   "this value aren't known; rely on the fuel trims and rear O2 voltage."))
+                                   "this value aren't known; rely on the fuel trims and rear O2 voltage.",
+                                   **c3f(f"{med:+.0f}%")))
             else:
                 out.append(Finding(INFO, f"Rear-sensor correction (A/F Correction #3) median {med:+.0f}%",
                                    f"Close to its usual resting value of about {P.c3_rest:+.0f}%, "
-                                   "so nothing to read into it."))
+                                   "so nothing to read into it.", **c3f(f"median {med:+.0f}%")))
 
     if L.has("Air/Fuel Sensor #1 Resistance") and L.has("Coolant Temperature"):
         r = L["Air/Fuel Sensor #1 Resistance"]
@@ -330,11 +375,12 @@ def check_sensors(L: Log, S, P: Profile) -> list[Finding]:
                 out.append(Finding(WARNING, "Front A/F sensor element resistance jumped to its maximum",
                                    f"Reads 255 Ω (off-scale) at {_fmt_ranges(bad)} after warm-up; typical is "
                                    f"{med:.0f} Ω. Short blips can be ECU housekeeping; repeated ones suggest "
-                                   "a heater or wiring problem.", bad))
+                                   "a heater or wiring problem.", bad, metric="at max",
+                                   channels=("Air/Fuel Sensor #1 Resistance",)))
             elif med > 100:
                 out.append(Finding(WARNING, f"Front A/F sensor element resistance is high ({med:.0f} Ω)",
                                    "A hot sensor normally reads a few tens of ohms. Heater circuit or ageing "
-                                   "sensor."))
+                                   "sensor.", channels=("Air/Fuel Sensor #1 Resistance",)))
     return out
 
 
@@ -350,9 +396,10 @@ def check_maf(L: Log, S, P: Profile) -> list[Finding]:
                 out.append(Finding(WARNING, f"Warm idle airflow is low ({g:.1f} g/s)",
                                    f"{engine[0].upper() + engine[1:]} usually idles around {lo:g}–{hi:g} g/s. "
                                    "A MAF reading low (dirty or failing) or air bypassing it would make the "
-                                   "engine run lean."))
+                                   "engine run lean.", channels=("Mass Air Flow",)))
             else:
-                out.append(Finding(OK, f"Warm idle airflow {g:.1f} g/s", f"Plausible for {engine}."))
+                out.append(Finding(OK, f"Warm idle airflow {g:.1f} g/s", f"Plausible for {engine}.",
+                                   metric=f"{g:.1f} g/s", short="Warm idle airflow", channels=("Mass Air Flow",)))
     if L.has("Air Flow Sensor Voltage"):
         v = L["Air Flow Sensor Voltage"]
         dv = np.abs(np.diff(v, prepend=v[0]))
@@ -371,9 +418,12 @@ def check_maf(L: Log, S, P: Profile) -> list[Finding]:
         if gl:
             out.append(Finding(WARNING, f"MAF voltage glitched {len(gl)} time(s) with steady throttle/RPM",
                                f"Single-sample jumps of over 0.5 V at {_fmt_ranges(gl)}. Can point to a poor "
-                               "connector or wiring - try wiggling the MAF plug while logging.", gl))
+                               "connector or wiring - try wiggling the MAF plug while logging.", gl,
+                               metric=_times(len(gl)), short="MAF voltage glitched with steady throttle/RPM",
+                               channels=("Air Flow Sensor Voltage",)))
         elif L.duration(steady) >= 20:
-            out.append(Finding(OK, "MAF voltage is smooth", "No single-sample spikes at steady throttle."))
+            out.append(Finding(OK, "MAF voltage is smooth", "No single-sample spikes at steady throttle.",
+                               metric="smooth", channels=("Air Flow Sensor Voltage",)))
     return out
 
 
@@ -392,15 +442,17 @@ def check_electrical(L: Log, S, P: Profile) -> list[Finding]:
     if low:
         out.append(Finding(PROBLEM, "Charging voltage dropped below 12.8 V for over a second",
                            f"At {_fmt_ranges(low)} (normal running: {med:.2f} V). Check the alternator, battery "
-                           "terminals and the main ground straps.", low))
+                           "terminals and the main ground straps.", low,
+                           metric=f"min {float(np.nanmin(v[run])):.2f} V", channels=BATT))
     if high:
-        out.append(Finding(PROBLEM, "Charging voltage above 15 V", f"At {_fmt_ranges(high)}. Regulator fault.", high))
+        out.append(Finding(PROBLEM, "Charging voltage above 15 V", f"At {_fmt_ranges(high)}. Regulator fault.", high,
+                           metric=f"max {float(np.nanmax(v[run])):.2f} V", channels=BATT))
     if not low and not high:
         short = [d for d in dips if d[1] - d[0] < 1.0]
         extra = (f" {len(short)} brief dip(s) below 13 V at {_fmt_ranges(short)} - single-sample dips "
                  "are normal when big loads switch on.") if short else ""
         out.append(Finding(OK, f"Charging voltage steady around {med:.2f} V", "Within 13.0–15.0 V." + extra,
-                           short))
+                           short, metric=f"{med:.2f} V", short="Charging voltage steady", channels=BATT))
     return out
 
 
@@ -413,17 +465,20 @@ def check_engine(L: Log, S, P: Profile) -> list[Finding]:
         if run_s > 600 and top < P.warm_c - 5:
             out.append(Finding(WARNING, f"Coolant only reached {top:.0f}°C after {run_s / 60:.0f} min running",
                                "Possible thermostat stuck open. The ECU keeps warm-up enrichment and fuel "
-                               "trim behaviour stays in 'cold' mode."))
+                               "trim behaviour stays in 'cold' mode.", metric=f"{top:.0f}°C",
+                               short="Coolant didn't reach operating temperature", channels=COOL))
         elif top >= P.warm_c:
             hit = np.flatnonzero(c >= P.warm_c)
             start = np.flatnonzero(S["running"])
             if len(hit) and len(start) and c[start[0]] < 40:
                 mins = (L.t[hit[0]] - L.t[start[0]]) / 60
                 out.append(Finding(INFO, f"Warmed from {c[start[0]]:.0f}°C to {P.warm_c:.0f}°C in {mins:.1f} min",
-                                   "Typical is 5–15 min depending on outside temperature and driving."))
+                                   "Typical is 5–15 min depending on outside temperature and driving.",
+                                   metric=f"{mins:.1f} min", short=f"Warm-up to {P.warm_c:.0f}°C", channels=COOL))
         if top > P.hot_c:
             out.append(Finding(WARNING, f"Coolant reached {top:.0f}°C",
-                               f"Hotter than the usual {P.running_c[0]:.0f}–{P.running_c[1]:.0f}°C."))
+                               f"Hotter than the usual {P.running_c[0]:.0f}–{P.running_c[1]:.0f}°C.",
+                               metric=f"{top:.0f}°C", short="Coolant ran hot", channels=COOL))
 
     rough = [n for n in (f"Roughness Monitor Cylinder #{i}" for i in range(1, 5)) if L.has(n)]
     if rough:
@@ -434,20 +489,24 @@ def check_engine(L: Log, S, P: Profile) -> list[Finding]:
             out.append(Finding(WARNING, "Misfire (roughness) counts on " + ", ".join(f"cyl {c}" for c, _ in bad),
                                "Samples with roughness > 0: " + ", ".join(f"cyl {c}: {k}" for c, k in hits)
                                + ". One cylinder standing out suggests an injector, coil or plug; a lean "
-                               "condition affects all four.", times))
+                               "condition affects all four.", times, metric=_times(len(times)),
+                               channels=tuple(n for n in rough if dict(hits).get(n[-2:]))))
         else:
-            out.append(Finding(OK, "No misfire roughness counts", "All four cylinders read 0."))
+            out.append(Finding(OK, "No misfire roughness counts", "All four cylinders read 0.", metric="0",
+                               channels=tuple(rough)))
 
     if L.has("Knock Signal #1"):
         k = L.runs(L["Knock Signal #1"] > 0, join_s=0.3)
         if len(k) > 5:
-            out.append(Finding(INFO, f"Knock signal seen {len(k)} times", f"At {_fmt_ranges(k)}.", k))
+            out.append(Finding(INFO, f"Knock signal seen {len(k)} times", f"At {_fmt_ranges(k)}.", k,
+                               metric=_times(len(k)), short="Knock signal seen", channels=("Knock Signal #1",)))
     if L.has("Learned Ignition Timing"):
         lit = float(np.nanmin(L["Learned Ignition Timing"]))
         if lit < -2:
             out.append(Finding(WARNING, f"Learned ignition timing down to {lit:.1f}°",
                                "The ECU has pulled timing for knock - low-octane fuel, carbon or running lean "
-                               "under load."))
+                               "under load.", metric=f"{lit:.1f}°", short="Learned ignition timing pulled back",
+                               channels=("Learned Ignition Timing",)))
 
     if L.has("Engine Speed"):
         ol = S["running"] & ~S["closed"] & ~S["fuel_cut"]
@@ -457,13 +516,16 @@ def check_engine(L: Log, S, P: Profile) -> list[Finding]:
         if r:
             out.append(Finding(INFO, f"Open loop (warm) {len(r)} time(s)",
                                f"At {_fmt_ranges(r)}. Normal at high load or after a fuel cut; the short-term "
-                               "trim reads 0 and the ECU ignores the sensors then.", r))
+                               "trim reads 0 and the ECU ignores the sensors then.", r, metric=_times(len(r)),
+                               short="Open loop while warm",
+                               channels=("Air/Fuel Correction #1",) if L.has("Air/Fuel Correction #1") else ()))
 
     gaps = np.flatnonzero(np.diff(L.t) > 1.0)
     if len(gaps):
         rr = [(float(L.t[i]), float(L.t[i + 1])) for i in gaps]
         out.append(Finding(INFO, f"{len(rr)} gap(s) in the log over 1 s",
-                           f"At {_fmt_ranges(rr)} - lost connection to the ECU.", rr))
+                           f"At {_fmt_ranges(rr)} - lost connection to the ECU.", rr,
+                           metric=f"{len(rr)} gap{'s' if len(rr) != 1 else ''}", short="Gaps in the log over 1 s"))
     return out
 
 
@@ -479,12 +541,14 @@ def check_boost(L: Log, S, P: Profile) -> list[Finding]:
     if L.duration(boost) < 1.0:
         return [Finding(INFO, f"Little or no time in boost (peak {peak:.1f} psi)",
                         f"The boost checks need a few seconds above {P.boost_psi:g} psi - for example a "
-                        "full-throttle pull in 3rd gear from about 2500 rpm, where it's safe and legal.")]
+                        "full-throttle pull in 3rd gear from about 2500 rpm, where it's safe and legal.",
+                        channels=MRP)]
     pulls = L.runs(boost, min_s=0.5, join_s=1.0)
     out.append(Finding(INFO, f"Peak boost {peak:.1f} psi over {len(pulls)} pull(s)",
                        f"At {_fmt_ranges(pulls)}. Compare with the stock target for your model: well below it "
                        "points to a boost leak (intercooler or hose couplers) or a sticking wastegate, well "
-                       "above it to a boost control fault.", pulls))
+                       "above it to a boost control fault.", pulls, metric=f"{peak:.1f} psi",
+                       short=f"Peak boost over {len(pulls)} pull{'s' if len(pulls) != 1 else ''}", channels=MRP))
     # judge fuelling and knock where boost is well established, not while it is still building
     deep = boost & (mrp >= max(P.boost_psi + 3, 0.7 * peak))
     if L.has("Air/Fuel Sensor #1 AFR") and L.duration(deep) >= 0.5:
@@ -496,10 +560,12 @@ def check_boost(L: Log, S, P: Profile) -> list[Finding]:
                                f"At {_fmt_ranges(lean)}; median {med:.1f} AFR at high boost. Turbo engines run "
                                "rich under boost (about 10.5–11.8 AFR) to stay safe - lean there risks "
                                "detonation. Fuel pump, injectors, a MAF reading low, or a leak after the MAF. "
-                               "Avoid full throttle until it's found.", lean))
+                               "Avoid full throttle until it's found.", lean, metric=f"median {med:.1f} AFR",
+                               short="Lean under boost", channels=MRP + (AFR,)))
         else:
             out.append(Finding(OK, f"Fuelling under boost {med:.1f} AFR (median)",
-                               f"Richer than {P.max_boost_afr:g} AFR throughout, as it should be."))
+                               f"Richer than {P.max_boost_afr:g} AFR throughout, as it should be.",
+                               short="Fuelling under boost", channels=MRP + (AFR,)))
     if L.has("Knock Correction"):
         kc = L["Knock Correction"]
         pulled = L.runs(boost & (kc < -1.5), join_s=0.5)
@@ -508,13 +574,16 @@ def check_boost(L: Log, S, P: Profile) -> list[Finding]:
             out.append(Finding(PROBLEM, f"Knock under boost: timing pulled by up to {-worst:.1f}°",
                                f"At {_fmt_ranges(pulled)}. Repeated knock under boost can damage pistons and "
                                "ringlands: check fuel octane, intake air temperature and fuelling, and drive "
-                               "gently until it's sorted.", pulled))
+                               "gently until it's sorted.", pulled, metric=f"−{-worst:.1f}°", short="Knock under boost",
+                               channels=MRP + ("Knock Correction",)))
         elif pulled:
             out.append(Finding(WARNING, f"Some knock under boost (up to {-worst:.1f}° pulled)",
                                f"At {_fmt_ranges(pulled)}. Occasional small corrections happen; regular ones "
-                               "suggest low-octane fuel or heat soak.", pulled))
+                               "suggest low-octane fuel or heat soak.", pulled, metric=f"−{-worst:.1f}°",
+                               short="Some knock under boost", channels=MRP + ("Knock Correction",)))
         else:
-            out.append(Finding(OK, "No knock correction under boost", f"Lowest {worst:+.1f}° in boost."))
+            out.append(Finding(OK, "No knock correction under boost", f"Lowest {worst:+.1f}° in boost.",
+                               metric=f"min {worst:+.1f}°", channels=MRP + ("Knock Correction",)))
     return out
 
 
@@ -537,7 +606,8 @@ def analyse(t: np.ndarray, series: dict[str, np.ndarray],
                         "No samples with the engine above 400 RPM.")]
     findings: list[Finding] = [Finding(INFO, f"Engine profile: {P.name}",
                                        f"{P.engines} - {note}. The thresholds below are rules of thumb "
-                                       "for these engines.")]
+                                       "for these engines.", short="Engine profile",
+                                       metric=P.name.replace("Naturally aspirated", "NA"))]
     for check in CHECKS:
         try:
             findings += check(L, S, P)
