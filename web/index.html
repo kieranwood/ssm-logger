@@ -105,6 +105,13 @@
   </aside>
 
   <div id="chart-col">
+  <div id="chart-bar" class="chart-bar">
+    <h2><span id="chart-range-title">In view</span> <span id="chart-range" class="num"></span></h2>
+    <div id="chart-layout" class="seg-group" role="group" aria-label="Chart layout">
+      <button class="seg" type="button" data-layout="stacked" aria-pressed="true" title="One chart per channel">Stacked</button>
+      <button class="seg" type="button" data-layout="overlay" aria-pressed="false" title="All channels on one chart, each scaled to fit">Overlay</button>
+    </div>
+  </div>
   <section id="charts">
     <div id="empty" class="start">
       <div class="start-intro">
@@ -147,6 +154,10 @@
       <div class="privacy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg><span>Everything runs in your browser. Nothing is uploaded.</span></div>
     </div>
   </section>
+  <div id="overview" class="overview">
+    <div class="ov-label"><b>Whole session</b><small><span id="overview-name"></span> · drag to pick a window</small></div>
+    <canvas id="overview-canvas" aria-label="Whole session overview: drag to pick the time window shown"></canvas>
+  </div>
   <section id="gauges" hidden>
     <div class="gauge-bar">
       <span class="g-rec">

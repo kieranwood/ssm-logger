@@ -31,7 +31,7 @@ function isDark() {
   return t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
 }
 const LEVEL_MARK = { problem: "✖", warning: "▲", info: "•", ok: "✔" };
-const CHART_HEIGHT = 140;
+const CHART_HEIGHT = 156;
 const HISTORY_ROWS = 80_000;          // live history kept in memory (~1 hour at 22 samples/s)
 const SAMPLE_URL = "samples/p0171-failing-af-sensor.csv";
 const HELP_TEXT = "Drag across a chart to zoom in · double-click to zoom out";
@@ -159,7 +159,7 @@ function showRecording(rec) {
 
   state.selected.forEach(colorFor);
   buildChannelList();
-  state.selected.forEach(addChart);
+  buildCharts();
   $("filter").disabled = false;
   $("analyse").disabled = false;
   $("reset").disabled = false;
@@ -238,18 +238,22 @@ function refreshChannelList() {
 function toggleChannel(i) {
   if (state.view === "gauges") { toggleGauge(state.rec.channels[i].name); return; }
   const at = state.selected.indexOf(i);
+  const overlay = state.chartLayout === "overlay";
   if (at >= 0) {
     if (state.maxChart === i) maximiseChart(null);
     state.selected.splice(at, 1);
     const c = state.charts.get(i);
-    c.u.destroy();
-    c.el.remove();
-    state.charts.delete(i);
+    if (c) {
+      c.u.destroy();
+      c.el.remove();
+      state.charts.delete(i);
+    }
     colorOf.delete(i);
   } else {
     state.selected.push(i);
-    addChart(i);
+    if (!overlay) addChart(i);
   }
+  if (overlay) rebuildCharts();
   refreshChannelList();
 }
 
@@ -302,19 +306,29 @@ function updateValues() {
   const rec = state.rec;
   if (!rec) return;
   const n = rec.t.length;
-  // live: show the newest values unless the cursor is over a chart
-  const idx = state.cursorIdx != null && state.cursorIdx < n ? state.cursorIdx : rec.live && n ? n - 1 : null;
+  // the cursor's values; otherwise the newest (live) or those at the right edge of the window in view
+  let idx = state.cursorIdx != null && state.cursorIdx < n ? state.cursorIdx : rec.live && n ? n - 1 : null;
+  if (idx == null && n && state.charts.size) {
+    const [, x1] = visibleRange();
+    idx = Number.isFinite(x1) ? Math.max(0, Math.min(n - 1, bsearch(rec.t, x1 + 1e-9) - 1)) : n - 1;
+  }
   for (const row of $("channels").children) {
     const i = Number(row.dataset.idx);
     const v = idx == null ? null : rec.y[i][idx];
     row.querySelector(".val").textContent = fmt(v, rec.channels[i].decimals);
   }
   for (const [i, c] of state.charts) {
+    if (c.overlay) {
+      for (const [j, row] of c.rows) {
+        row.querySelector(".v").textContent = idx == null ? "–" : fmt(rec.y[j][idx], rec.channels[j].decimals);
+      }
+      continue;
+    }
     const v = idx == null ? null : rec.y[i][idx];
-    c.valEl.textContent = idx == null ? "" : `${fmt(v, rec.channels[i].decimals)} ${rec.channels[i].units}`;
+    c.valEl.textContent = idx == null ? "–" : fmt(v, rec.channels[i].decimals);
   }
   if (!rec.live) {
-    $("cursor-readout").textContent = state.cursorIdx == null ? HELP_TEXT : `Cursor at ${rec.t[idx].toFixed(2)} s`;
+    $("cursor-readout").textContent = state.cursorIdx == null || idx == null ? HELP_TEXT : `Cursor at ${rec.t[idx].toFixed(2)} s`;
   }
 }
 
@@ -324,8 +338,15 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function chartWidth() {
-  return $("charts").clientWidth;
+// Wide enough: each chart has its info column (name, value, min/avg/max) on the left;
+// narrower: the info sits above the plot. Matches the container query in style.css.
+const INFO_W = 200, OVERLAY_INFO_W = 290, NARROW_CHARTS = 760;
+function chartsNarrow() {
+  return $("charts").clientWidth < NARROW_CHARTS;
+}
+function chartWidth(key) {
+  const w = $("charts").clientWidth;
+  return chartsNarrow() ? w : w - (key === "overlay" ? OVERLAY_INFO_W : INFO_W);
 }
 
 function drawOverlays(u) {
@@ -382,6 +403,44 @@ function seriesData(i) {
   return uPlot.join([[Array.from(rec.t), nulled(rec.y[i])], [cmp.t, cmp.y]]);
 }
 
+const GRIP_SVG = `<svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true">` +
+  `<circle cx="3" cy="3" r="1.4"></circle><circle cx="9" cy="3" r="1.4"></circle><circle cx="3" cy="8" r="1.4"></circle>` +
+  `<circle cx="9" cy="8" r="1.4"></circle><circle cx="3" cy="13" r="1.4"></circle><circle cx="9" cy="13" r="1.4"></circle></svg>`;
+const X_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+  `stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>`;
+
+function axisOpts() {
+  return { stroke: cssVar("--axis"), grid: { stroke: cssVar("--grid"), width: 1 },
+           ticks: { stroke: cssVar("--grid"), width: 1 },
+           font: '11px "JetBrains Mono", ui-monospace, monospace',
+           labelFont: '500 12px "Space Grotesk", system-ui, sans-serif' };
+}
+
+/** Hooks every chart shares: synced zoom, live pause on drag-zoom, cursor values, stats. */
+function chartHooks(rec) {
+  return {
+    draw: [drawOverlays],
+    setScale: [(u, key) => { if (key === "x") { syncX(u); scheduleStats(); } }],
+    setSelect: [(u) => { if (rec.live && u.select.width > 0) setFollowing(false); }],
+    setCursor: [(u) => {
+      const idx = u.cursor.idx;
+      if (idx == null && !rec.live) return;      // keep the last position when reviewing
+      if (idx !== state.cursorIdx) {
+        state.cursorIdx = idx;
+        updateValues();
+      }
+    }],
+  };
+}
+
+/** Builds the chart(s) for the current layout: one per channel (stacked), or one with them all. */
+function buildCharts() {
+  if (state.chartLayout === "overlay" && state.selected.length) addOverlay();
+  else state.selected.forEach(addChart);
+  updateStats();
+  updateChartBar();
+}
+
 function addChart(i) {
   const rec = state.rec;
   const ch = rec.channels[i];
@@ -389,33 +448,33 @@ function addChart(i) {
 
   const el = document.createElement("div");
   el.className = "chart";
-  const label = document.createElement("div");
-  label.className = "label";
-  label.innerHTML = `<span class="grip" draggable="true" title="Drag to move this chart">` +
-    `<svg width="12" height="16" viewBox="0 0 12 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="3" r="1.4"></circle>` +
-    `<circle cx="9" cy="3" r="1.4"></circle><circle cx="3" cy="8" r="1.4"></circle><circle cx="9" cy="8" r="1.4"></circle>` +
-    `<circle cx="3" cy="13" r="1.4"></circle><circle cx="9" cy="13" r="1.4"></circle></svg></span>` +
-    `<span class="sw"></span><span class="n"></span><span class="v num"></span>`;
-  label.querySelector(".n").textContent = ch.name;
-  label.querySelector(".sw").style.background = colorFor(i);
-  el.appendChild(label);
-  const maxBtn = document.createElement("button");
-  maxBtn.className = "chart-max";
+  el.innerHTML = `<div class="chart-info">` +
+      `<div class="ci-head"><span class="grip" draggable="true" title="Drag to move this chart">${GRIP_SVG}</span>` +
+      `<span class="sw"></span><h3 class="n"></h3></div>` +
+      `<div class="ci-val"><span class="v num"></span><span class="u"></span></div>` +
+      `<div class="ci-stats num"><span>min<br><b class="s-min"></b></span><span>avg<br><b class="s-avg"></b></span>` +
+      `<span>max<br><b class="s-max"></b></span></div>` +
+    `</div><div class="chart-plot"><div class="chart-tools">` +
+      `<button class="chart-max"></button>` +
+      `<button class="chart-remove" title="Remove this chart" aria-label="Remove the ${ch.name.replace(/"/g, "")} chart">${X_SVG}</button>` +
+    `</div></div>`;
+  el.querySelector(".n").textContent = ch.name;
+  el.querySelector(".n").title = ch.name;
+  el.querySelector(".u").textContent = ch.units || "";
+  el.querySelector(".sw").style.background = colorFor(i);
+  const maxBtn = el.querySelector(".chart-max");
   maxBtn.addEventListener("click", () => maximiseChart(state.maxChart === i ? null : i));
-  el.appendChild(maxBtn);
+  el.querySelector(".chart-remove").addEventListener("click", () => toggleChannel(i));
   el.classList.toggle("maxed", state.maxChart === i);
   setMaxButton(maxBtn, state.maxChart === i);
-  chartDragToMove(el, label.querySelector(".grip"), i);
+  chartDragToMove(el, el.querySelector(".grip"), i);
 
   // keep charts in selection order
   const pos = state.selected.indexOf(i);
   const next = state.selected.slice(pos + 1).map((j) => state.charts.get(j)).find(Boolean);
   $("charts").insertBefore(el, next ? next.el : null);
 
-  const axis = { stroke: cssVar("--axis"), grid: { stroke: cssVar("--grid"), width: 1 },
-                 ticks: { stroke: cssVar("--grid"), width: 1 },
-                 font: '11px "JetBrains Mono", ui-monospace, monospace',
-                 labelFont: '500 12px "Space Grotesk", system-ui, sans-serif' };
+  const axis = axisOpts();
   const existing = [...state.charts.values()][0];
   const opts = {
     width: chartWidth(),
@@ -425,32 +484,283 @@ function addChart(i) {
     scales: { x: { time: false } },
     axes: [
       { ...axis, size: 28 },
-      { ...axis, size: 60, label: ch.units, labelSize: 16 },
+      { ...axis, size: 52 },
     ],
     series: [
       {},
       { stroke: colorFor(i), width: 1.6, paths: ch.switch ? uPlot.paths.stepped({ align: 1 }) : undefined },
       ...(compareSeries(i) ? [{ stroke: cssVar("--compare"), width: 1.1, dash: [6, 4], spanGaps: true }] : []),
     ],
-    hooks: {
-      draw: [drawOverlays],
-      setScale: [(u, key) => key === "x" && syncX(u)],
-      setSelect: [(u) => { if (rec.live && u.select.width > 0) setFollowing(false); }],
-      setCursor: [(u) => {
-        const idx = u.cursor.idx;
-        if (idx == null && !rec.live) return;      // keep the last position when reviewing
-        if (idx !== state.cursorIdx) {
-          state.cursorIdx = idx;
-          updateValues();
-        }
-      }],
-    },
+    hooks: chartHooks(rec),
   };
-  const u = new uPlot(opts, seriesData(i), el);
+  const u = new uPlot(opts, seriesData(i), el.querySelector(".chart-plot"));
   if (existing) u.setScale("x", { ...existing.u.scales.x });
   else if (rec.live) followLatest(u);
-  state.charts.set(i, { u, el, valEl: label.querySelector(".v") });
+  state.charts.set(i, { u, el, valEl: el.querySelector(".v"),
+                        stats: [".s-min", ".s-avg", ".s-max"].map((q) => el.querySelector(q)) });
   updateValues();
+  scheduleStats();
+}
+
+// ---- overlay: every selected channel on one chart, each scaled to its own min-max in view
+function overlayData() {
+  const rec = state.rec;
+  return [rec.live ? rec.t : rec.t, ...state.selected.map((i) => (rec.live ? rec.y[i] : nulled(rec.y[i])))];
+}
+
+function addOverlay() {
+  const rec = state.rec;
+  $("empty")?.remove();
+  const el = document.createElement("div");
+  el.className = "chart overlay";
+  el.innerHTML = `<div class="chart-info"><p class="ov-note">Each line is scaled to its own min–max for this ` +
+    `window. Click one to bring it forward.</p><div class="ov-legend"></div></div><div class="chart-plot"></div>`;
+  const legend = el.querySelector(".ov-legend");
+  const rows = new Map();
+  for (const i of state.selected) {
+    const ch = rec.channels[i];
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ov-item";
+    b.innerHTML = `<span class="ov-line"></span><span class="ov-text"><span class="ov-name"></span>` +
+      `<span class="ov-range num"></span></span><span class="ov-val num"><span class="v"></span><small></small></span>`;
+    b.querySelector(".ov-line").style.background = colorFor(i);
+    b.querySelector(".ov-name").textContent = ch.name;
+    b.querySelector("small").textContent = ch.units || "";
+    b.addEventListener("click", () => focusOverlay(state.overlayFocus === i ? null : i));
+    legend.append(b);
+    rows.set(i, b);
+  }
+  $("charts").append(el);
+  const axis = axisOpts();
+  const existing = [...state.charts.values()][0];
+  const scales = { x: { time: false } };
+  state.selected.forEach((i) => { scales[`y${i}`] = { auto: true }; });
+  const dim = (i, color) => (state.overlayFocus == null || state.overlayFocus === i ? color : color + "38");
+  const u = new uPlot({
+    width: chartWidth("overlay"),
+    height: chartHeight("overlay"),
+    legend: { show: false },
+    cursor: { sync: { key: "ssm" }, drag: { x: true, y: false }, points: { size: 6 } },
+    scales,
+    axes: [{ ...axis, size: 28 },
+           { ...axis, scale: state.selected.length ? `y${state.selected[0]}` : "y", size: 52,
+             splits: (u2) => {
+               const sc = u2.scales[`y${state.selected[0]}`];
+               return Number.isFinite(sc?.min) && Number.isFinite(sc?.max) ? [sc.min, sc.max] : [];
+             },
+             values: (u2, sp) => sp.map((_, k) => (k ? "max" : "min")), grid: { show: false } }],
+    series: [{}, ...state.selected.map((i) => {
+      const color = colorFor(i);
+      return { scale: `y${i}`, stroke: () => dim(i, color), width: 1.6,
+               paths: rec.channels[i].switch ? uPlot.paths.stepped({ align: 1 }) : undefined };
+    })],
+    hooks: chartHooks(rec),
+  }, overlayData(), el.querySelector(".chart-plot"));
+  if (existing) u.setScale("x", { ...existing.u.scales.x });
+  else if (rec.live) followLatest(u);
+  state.charts.set("overlay", { u, el, overlay: true, rows });
+  focusOverlay(state.overlayFocus);
+  updateValues();
+  scheduleStats();
+}
+
+function focusOverlay(i) {
+  const c = state.charts.get("overlay");
+  if (!c) return;
+  state.overlayFocus = i != null && state.selected.includes(i) ? i : null;
+  for (const [j, b] of c.rows) {
+    b.setAttribute("aria-pressed", String(state.overlayFocus === j));
+    b.classList.toggle("dim", state.overlayFocus != null && state.overlayFocus !== j);
+  }
+  c.u.redraw(false);
+  drawOverview();            // the overview follows the focused line
+}
+
+/** New data for chart entry c (key i). */
+function refreshChart(i, c) {
+  c.u.setData(c.overlay ? overlayData() : seriesData(i), false);
+}
+
+// ---- min / avg / max of what's in view, for each chart
+let statsQueued = false, statsLast = 0;
+function scheduleStats() {
+  if (statsQueued) return;
+  statsQueued = true;
+  const wait = Math.max(0, 120 - (performance.now() - statsLast));
+  setTimeout(() => requestAnimationFrame(() => { statsQueued = false; statsLast = performance.now(); updateStats(); }), wait);
+}
+
+function rangeStats(col, a, b) {
+  let mn = Infinity, mx = -Infinity, sum = 0, n = 0;
+  for (let k = a; k <= b; k++) {
+    const v = col[k];
+    if (v == null || v !== v) continue;
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    sum += v; n++;
+  }
+  return n ? [mn, sum / n, mx] : [null, null, null];
+}
+
+function updateStats() {
+  const rec = state.rec;
+  if (!rec || !state.charts.size) return;
+  if (!rec.live && state.cursorIdx == null) updateValues();
+  const t = rec.t;
+  const [x0, x1] = visibleRange();
+  const a = Math.max(0, bsearch(t, x0)), b = Math.min(t.length - 1, bsearch(t, x1 + 1e-9) - 1);
+  for (const [i, c] of state.charts) {
+    if (c.overlay) {
+      for (const [j, row] of c.rows) {
+        const [mn, , mx] = b >= a ? rangeStats(rec.y[j], a, b) : [null, null, null];
+        const d = rec.channels[j].decimals;
+        row.querySelector(".ov-range").textContent = mn == null ? "–" : `${fmt(mn, d)} – ${fmt(mx, d)}`;
+      }
+    } else {
+      const st = b >= a ? rangeStats(rec.y[i], a, b) : [null, null, null];
+      const d = rec.channels[i].decimals;
+      st.forEach((v, k) => { c.stats[k].textContent = fmt(v, k === 1 ? Math.max(d, 1) : d); });
+    }
+  }
+  updateChartBar();
+}
+
+// ---- the bar above the charts: what's in view, and the layout switch
+function updateChartBar() {
+  const rec = state.rec;
+  if (!rec) return;
+  const [x0, x1] = visibleRange();
+  const live = rec.live && state.following;
+  const w = state.windowSec;
+  $("chart-range-title").textContent = live
+    ? (w ? `Last ${w >= 60 ? `${w / 60} minute${w > 60 ? "s" : ""}` : `${w} seconds`}` : "Whole session")
+    : "In view";
+  $("chart-range").textContent = Number.isFinite(x0) ? `${x0.toFixed(1)} – ${x1.toFixed(1)} s` : "";
+  for (const b of document.querySelectorAll("#chart-layout .seg")) {
+    b.setAttribute("aria-pressed", String(b.dataset.layout === (state.chartLayout || "stacked")));
+  }
+  drawOverview();
+}
+
+// ---- whole-session overview: one channel over the whole recording, with the window in view;
+// drag across it to pick a window, click to move the window there.
+const ov = { key: "", path: null, drag: null };
+
+function overviewChannel() {
+  return state.overlayFocus != null && state.selected.includes(state.overlayFocus) ? state.overlayFocus : state.selected[0];
+}
+
+function drawOverview() {
+  const rec = state.rec, cv = $("overview-canvas");
+  if (!rec || $("overview").hidden || !cv.clientWidth) return;
+  const i = overviewChannel();
+  $("overview-name").textContent = i == null ? "" : rec.channels[i].name;
+  const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); ov.key = "";
+  }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const t = rec.t, n = t.length;
+  if (i == null || n < 2) return;
+  const t0 = t[0], t1 = t[n - 1], X = (x) => ((x - t0) / (t1 - t0 || 1)) * w;
+  // the line: min/max per pixel column, rebuilt when the data or size changed (live: at most once a second)
+  const key = `${i}|${w}|${h}|${n}`;
+  if (key !== ov.key && (!rec.live || !ov.built || performance.now() - ov.built > 1000 || !ov.path)) {
+    const col = rec.y[i], cols = Math.max(1, Math.round(w));
+    const mn = new Float64Array(cols).fill(Infinity), mx = new Float64Array(cols).fill(-Infinity);
+    let lo = Infinity, hi = -Infinity;
+    for (let k = 0; k < n; k++) {
+      const v = col[k];
+      if (v == null || v !== v) continue;
+      const c = Math.min(cols - 1, Math.floor(X(t[k])));
+      if (v < mn[c]) mn[c] = v;
+      if (v > mx[c]) mx[c] = v;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    const Y = (v) => h - 4 - ((v - lo) / (hi - lo || 1)) * (h - 8);
+    const path = new Path2D();
+    let pen = false;
+    for (let c = 0; c < cols; c++) {
+      if (mn[c] === Infinity) continue;          // no sample in this pixel column: join across it
+      if (pen) path.lineTo(c + 0.5, Y(mx[c])); else path.moveTo(c + 0.5, Y(mx[c]));
+      path.lineTo(c + 0.5, Y(mn[c]));
+      pen = true;
+    }
+    ov.path = path; ov.key = key; ov.built = performance.now();
+  }
+  ctx.strokeStyle = colorFor(i);
+  ctx.globalAlpha = 0.8;
+  ctx.lineWidth = 1.25;
+  ctx.stroke(ov.path);
+  ctx.globalAlpha = 1;
+  // the window in view (or being dragged)
+  const [a, b] = ov.drag?.moved ? [Math.min(ov.drag.a, ov.drag.b), Math.max(ov.drag.a, ov.drag.b)] : visibleRange();
+  if (Number.isFinite(a)) {
+    const xa = Math.max(0, X(a)), xb = Math.min(w, X(b));
+    const accent = cssVar("--accent-fill");
+    ctx.fillStyle = accent + "18";
+    ctx.fillRect(xa, 0, Math.max(2, xb - xa), h);
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(xa + 0.75, 0.75, Math.max(2, xb - xa) - 1.5, h - 1.5, 6) : ctx.rect(xa, 0, xb - xa, h);
+    ctx.stroke();
+  }
+}
+
+function overviewTime(e) {
+  const cv = $("overview-canvas"), r = cv.getBoundingClientRect(), t = state.rec.t;
+  const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  return t[0] + f * (t[t.length - 1] - t[0]);
+}
+
+$("overview-canvas").addEventListener("pointerdown", (e) => {
+  if (!state.rec?.t.length) return;
+  e.target.setPointerCapture(e.pointerId);
+  const x = overviewTime(e);
+  ov.drag = { a: x, b: x, x0: e.clientX, moved: false };
+});
+$("overview-canvas").addEventListener("pointermove", (e) => {
+  if (!ov.drag) return;
+  ov.drag.b = overviewTime(e);
+  if (Math.abs(e.clientX - ov.drag.x0) > 4) ov.drag.moved = true;
+  drawOverview();
+});
+$("overview-canvas").addEventListener("pointerup", (e) => {
+  const d = ov.drag;
+  ov.drag = null;
+  if (!d || !state.rec) return;
+  const t = state.rec.t;
+  let a, b;
+  if (d.moved) {
+    [a, b] = [Math.min(d.a, d.b), Math.max(d.a, d.b)];
+  } else {
+    // click: keep the window's width, centred where clicked
+    const [x0, x1] = visibleRange();
+    const half = (Number.isFinite(x0) ? x1 - x0 : t[t.length - 1] - t[0]) / 2;
+    a = Math.max(t[0], d.a - half);
+    b = Math.min(t[t.length - 1], a + half * 2);
+    a = Math.max(t[0], b - half * 2);
+  }
+  if (state.rec.live) setFollowing(false);
+  zoomTo(a, Math.max(b, a + 0.5));
+});
+new ResizeObserver(() => requestAnimationFrame(drawOverview)).observe($("overview-canvas"));
+
+for (const b of document.querySelectorAll("#chart-layout .seg")) {
+  b.addEventListener("click", () => setChartLayout(b.dataset.layout));
+}
+try { state.chartLayout = localStorage.getItem("ssm-logger.chartLayout") === "overlay" ? "overlay" : "stacked"; } catch { /* private mode */ }
+
+function setChartLayout(layout) {
+  state.chartLayout = layout;
+  try { localStorage.setItem("ssm-logger.chartLayout", layout); } catch { /* private mode */ }
+  if (state.maxChart != null) maximiseChart(null);
+  rebuildCharts();
 }
 
 function zoomTo(min, max) {
@@ -619,13 +929,14 @@ function scheduleLiveRedraw() {
     if (state.view === "gauges") {
       drawGauges();
     } else if (state.following) {
-      for (const [i, c] of state.charts) c.u.setData(seriesData(i), false);
+      for (const [i, c] of state.charts) refreshChart(i, c);
       if (!scrolling) followLatest();          // scrollFrame moves the window smoothly otherwise
     } else if (state.dirty) {
-      for (const [i, c] of state.charts) c.u.setData(seriesData(i), false);
+      for (const [i, c] of state.charts) refreshChart(i, c);
       redrawAll();
     }
     state.dirty = false;
+    if (state.view === "charts") scheduleStats();
     captureTick();
     updateValues();
     updateInfo();
@@ -1333,7 +1644,7 @@ function rebuildCharts() {
   const [min, max] = visibleRange();
   for (const c of state.charts.values()) { c.u.destroy(); c.el.remove(); }
   state.charts.clear();
-  state.selected.forEach(addChart);
+  buildCharts();
   if (Number.isFinite(min)) zoomTo(min, max);
 }
 
@@ -1386,13 +1697,17 @@ async function createReport() {
 // ------------------------------------------------------------------ wiring
 
 function resizeCharts() {
-  const w = chartWidth();
-  for (const [i, c] of state.charts) c.u.setSize({ width: w, height: chartHeight(i) });
+  for (const [i, c] of state.charts) c.u.setSize({ width: chartWidth(i), height: chartHeight(i) });
+  drawOverview();
 }
 
 /** A maximised chart fills the chart area; the others keep the standard height. */
+/** A maximised chart, or the overlay chart, fills the chart area; the others keep the standard height. */
 function chartHeight(i) {
-  return state.maxChart === i ? Math.max(CHART_HEIGHT, $("charts").clientHeight - 31) : CHART_HEIGHT;   // 30 px title strip
+  const fill = state.maxChart === i || i === "overlay";
+  if (!fill) return CHART_HEIGHT;
+  const info = chartsNarrow() ? (state.charts.get(i)?.el.querySelector(".chart-info")?.offsetHeight ?? 90) : 0;
+  return Math.max(i === "overlay" ? 360 : CHART_HEIGHT, $("charts").clientHeight - info - 2);
 }
 
 function setMaxButton(btn, maxed) {
@@ -1408,7 +1723,8 @@ function maximiseChart(i) {
   document.body.classList.toggle("max-chart", i != null);
   for (const [j, c] of state.charts) {
     c.el.classList.toggle("maxed", j === i);
-    setMaxButton(c.el.querySelector(".chart-max"), j === i);
+    const btn = c.el.querySelector(".chart-max");
+    if (btn) setMaxButton(btn, j === i);
   }
   resizeCharts();
   if (i != null) $("charts").scrollTop = 0;
@@ -1873,6 +2189,8 @@ function setView(v) {
   const gauges = v === "gauges";
   if (gauges && state.maxChart != null) maximiseChart(null);
   $("charts").hidden = gauges;
+  $("chart-bar").hidden = gauges;
+  $("overview").hidden = gauges;
   $("gauges").hidden = !gauges;
   $("view-gauges").setAttribute("aria-pressed", String(gauges));
   $("view-charts").setAttribute("aria-pressed", String(!gauges));
@@ -1886,7 +2204,7 @@ function setView(v) {
     stopPlay();
     resizeCharts();
     if (state.rec.live) {
-      for (const [i, c] of state.charts) c.u.setData(seriesData(i), false);
+      for (const [i, c] of state.charts) refreshChart(i, c);
       if (state.following) followLatest(); else redrawAll();
     }
   }
