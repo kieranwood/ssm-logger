@@ -88,11 +88,12 @@ function drawDial(ctx, w, h, g, c) {
   arc(lo, hi, c.track);
   for (const [a, b, level] of zones) arc(a, b, levelColor(c, level), lw * 0.35, r - lw * 0.175);
   const v = g.value;
+  const p = g.pos != null && Number.isFinite(g.pos) ? g.pos : v;   // where the needle is (eased)
   const has = v != null && Number.isFinite(v);
   const col = levelColor(c, zoneAt(g.spec, v));
   if (has) {
     const base = g.spec.centre != null ? g.spec.centre : lo;
-    arc(Math.min(base, v), Math.max(base, v), col, lw * 0.55, r - lw * 0.65);
+    arc(Math.min(base, p), Math.max(base, p), col, lw * 0.55, r - lw * 0.65);
   }
   // ticks and labels
   if (step) {
@@ -128,7 +129,7 @@ function drawDial(ctx, w, h, g, c) {
   }
   // needle
   if (has) {
-    const a = ang(v);
+    const a = ang(p);
     ctx.beginPath();
     ctx.moveTo(cx - Math.cos(a) * r * 0.08, cy - Math.sin(a) * r * 0.08);
     ctx.lineTo(cx + Math.cos(a) * (r - lw * 0.8), cy + Math.sin(a) * (r - lw * 0.8));
@@ -170,6 +171,7 @@ function drawBar(ctx, w, h, g, c) {
   const { lo, hi, zones, step, scale, left, right } = g.spec;
   const centre = g.spec.type === "centre" ? (g.spec.centre != null ? g.spec.centre : (lo + hi) / 2) : lo;
   const v = g.value;
+  const p = g.pos != null && Number.isFinite(g.pos) ? g.pos : v;   // where the bar is drawn to (eased)
   const has = v != null && Number.isFinite(v);
   const level = zoneAt(g.spec, v);
   const col = levelColor(c, level);
@@ -195,7 +197,7 @@ function drawBar(ctx, w, h, g, c) {
   }
   if (has) {
     ctx.fillStyle = col;
-    const a = X(Math.min(centre, v)), b = X(Math.max(centre, v));
+    const a = X(Math.min(centre, p)), b = X(Math.max(centre, p));
     roundRect(ctx, a, by, Math.max(b - a, 2), bh, Math.min(bh / 2, (b - a) / 2));
     ctx.fill();
   }

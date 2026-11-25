@@ -620,7 +620,7 @@ function scheduleLiveRedraw() {
       drawGauges();
     } else if (state.following) {
       for (const [i, c] of state.charts) c.u.setData(seriesData(i), false);
-      followLatest();
+      if (!scrolling) followLatest();          // scrollFrame moves the window smoothly otherwise
     } else if (state.dirty) {
       for (const [i, c] of state.charts) c.u.setData(seriesData(i), false);
       redrawAll();
@@ -683,9 +683,41 @@ function onLiveSample(t, row) {
   }
   if (state.recorder) state.recorder.write(t, row, state.pendingMark);
   state.pendingMark = null;
+  // map the data clock to the wall clock, so the charts can scroll between samples
+  const est = t - performance.now() / 1000;
+  state.clockOffset = state.clockOffset == null || Math.abs(est - state.clockOffset) > 2
+    ? est : state.clockOffset + 0.05 * (est - state.clockOffset);
   state.dirty = true;
   scheduleLiveRedraw();
+  startScrolling();
 }
+
+// ---- smooth scrolling: while following live data the x window slides every frame, a fixed
+// moment behind the newest sample, instead of jumping each time new data is drawn (10 times a second).
+const SCROLL_LAG = 0.35;           // seconds behind the newest sample, so the line end is always drawn
+let scrolling = false;
+
+function startScrolling() {
+  if (scrolling || REDUCED_MOTION.matches) return;
+  scrolling = true;
+  requestAnimationFrame(scrollFrame);
+}
+
+function scrollFrame(now) {
+  const rec = state.rec;
+  if (!rec?.live || !state.session) { scrolling = false; return; }
+  requestAnimationFrame(scrollFrame);
+  if (!state.following || state.view !== "charts" || !state.charts.size || state.clockOffset == null) return;
+  const t = rec.t;
+  if (!t.length) return;
+  const edge = Math.min(now / 1000 + state.clockOffset - SCROLL_LAG, t[t.length - 1]);
+  const min = state.windowSec ? Math.max(t[0], edge - state.windowSec) : t[0];
+  const max = Math.max(edge, min + 1);
+  state.syncing = true;               // every chart is set here; no need for syncX to echo it
+  for (const c of state.charts.values()) c.u.setScale("x", { min, max });
+  state.syncing = false;
+}
+const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)");
 
 async function ensureDefs() {
   const py = await state.pyReady;
@@ -1801,10 +1833,38 @@ function drawGauges() {
       for (let k = k0; k <= idx; k += every) { ts.push(t[k]); vs.push(col[k]); }
       hist = [ts, vs];
     }
-    drawGauge(tile.canvas, { spec, value: value ?? null, min: mn, max: mx,
-                             decimals: spec.decimals ?? Math.min(ch.decimals ?? 2, 2),
-                             units: ch.units || "", hist, tNow: idx == null ? 0 : t[idx] }, colors);
+    const g = { spec, value: value ?? null, min: mn, max: mx,
+                decimals: spec.decimals ?? Math.min(ch.decimals ?? 2, 2),
+                units: ch.units || "", hist, tNow: idx == null ? 0 : t[idx] };
+    tile.g = g;
+    // needles and bars glide to the new value; the number shown is always the real one
+    const has = g.value != null && Number.isFinite(g.value);
+    if (!has || tile.pos == null || !Number.isFinite(tile.pos) || REDUCED_MOTION.matches) tile.pos = g.value;
+    g.pos = tile.pos;
+    drawGauge(tile.canvas, g, colors);
   }
+  if (!easing && !REDUCED_MOTION.matches) { easing = true; gv.easeLast = performance.now(); requestAnimationFrame(easeFrame); }
+}
+
+const EASE_TAU = 0.12;             // seconds for a needle to cover ~63% of the way to a new value
+let easing = false;
+
+function easeFrame(now) {
+  if (state.view !== "gauges" || !state.rec) { easing = false; return; }
+  const k = 1 - Math.exp(-Math.min(0.1, (now - gv.easeLast) / 1000) / EASE_TAU);
+  gv.easeLast = now;
+  let moving = false, colors = null;
+  for (const tile of gv.tiles.values()) {
+    const g = tile.g;
+    if (!g || g.value == null || !Number.isFinite(g.value) || tile.pos == null) continue;
+    const span = (g.spec.hi ?? 1) - (g.spec.lo ?? 0) || 1;
+    if (Math.abs(g.value - tile.pos) < span * 0.0015) { if (tile.pos === g.value) continue; tile.pos = g.value; }
+    else { tile.pos += (g.value - tile.pos) * k; moving = true; }
+    g.pos = tile.pos;
+    drawGauge(tile.canvas, g, colors ??= gaugeColors());
+  }
+  if (moving) requestAnimationFrame(easeFrame);
+  else easing = false;
 }
 
 function setView(v) {
