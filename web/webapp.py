@@ -8,6 +8,7 @@ the JavaScript driver with pyodide.ffi.run_sync, which needs JSPI (Chrome/Edge 1
 from __future__ import annotations
 
 import json
+import re
 import math
 
 import numpy as np
@@ -142,6 +143,92 @@ def read_codes(js_request) -> str:
         dtc.format_test_results(dtc.read_test_results(request)),
         dtc.format_vehicle_info(dtc.read_vehicle_info(request)),
     ])
+
+
+_FF_GROUPS = [
+    ("Fuel & mixture", ("fuel system", "fuel trim", "o2 ", "a/f", "lambda", "fuel pressure", "evap")),
+    ("Engine", ("engine speed", "load", "manifold", "air flow", "throttle", "ignition", "accelerator")),
+    ("Conditions", ("",)),     # everything else
+]
+
+
+def _ff_name(name: str) -> str:
+    """'O2 sensor bank 1 sensor 2 (rear) voltage' -> 'Rear O2 sensor'."""
+    m = re.fullmatch(r"(O2|A/F) sensor bank 1 sensor \d \((front|rear)\)( voltage| current)?", name)
+    return f"{m.group(2).capitalize()} {m.group(1)} sensor" if m else name
+
+
+def _split_value(name: str, text: str) -> tuple[str, str]:
+    """'95 km/h (59 mph)' -> ('95 km/h', '59 mph'); 'closed loop - using ...' -> ('Closed loop', 'using ...');
+    'lambda 1.000 (AFR 14.70), current +0.00 mA' -> ('λ 1.000', 'AFR 14.70 · +0.00 mA')."""
+    if text.startswith("lambda "):
+        v, _, rest = text.replace("lambda ", "λ ", 1).partition(" (")
+        return v, re.sub(r"[()]", "", rest).replace(", current", " ·").replace(", ", " · ")
+    if " - " in text:
+        v, sub = text.split(" - ", 1)
+        return v[:1].upper() + v[1:], sub
+    m = re.fullmatch(r"(.*?) \((.*)\)", text)
+    return (m.group(1), m.group(2)) if m else (text, "")
+
+
+def _num(text: str) -> float | None:
+    m = re.match(r"[+-]?\d+(\.\d+)?", text.strip())
+    return float(m.group(0)) if m else None
+
+
+def read_codes_json(js_request) -> str:
+    """Everything the fault-codes dialog shows, structured; "text" is the plain report for copying."""
+    import dtc
+    request = _bridge(js_request)
+    results = dtc.read_all(request)
+    ff = dtc.read_freeze_frame(request)
+    st = dtc.read_status(request)
+    tests = dtc.read_test_results(request)
+    vi = dtc.read_vehicle_info(request)
+
+    codes: dict[str, dict] = {}
+    for r in results:
+        for c in r.codes:
+            entry = codes.setdefault(c, {"code": c, "kinds": []})
+            if r.title not in entry["kinds"]:
+                entry["kinds"].append(r.title)
+    for c, e in codes.items():
+        desc = dtc.describe(c)
+        m = re.fullmatch(r"(.*) \((bank \d[^)]*)\)", desc)
+        e.update(desc=m.group(1) if m else desc, bank=m.group(2).capitalize() if m else "",
+                 system=dtc.SYSTEMS.get(c[0], ""), source=dtc.code_kind(c),
+                 explain=dtc.EXPLANATIONS.get(c, ""))
+
+    by_group: dict[str, list[dict]] = {title: [] for title, _ in _FF_GROUPS}
+    for name, text in ff.values:
+        title = next(t for t, keys in _FF_GROUPS if any(k in name.lower() for k in keys))
+        v, sub = _split_value(name, text)
+        by_group[title].append({"k": _ff_name(name), "v": v, "sub": sub})
+    groups = [{"title": t, "rows": rows} for t, rows in by_group.items() if rows]
+    ffd = dict(ff.values)
+    trims = {k: _num(ffd[n]) for k, n in (("short", "Short-term fuel trim"), ("long", "Long-term fuel trim"))
+             if n in ffd}
+
+    return json.dumps({
+        "codes": list(codes.values()),
+        "mode_errors": [{"title": r.title, "error": r.error} for r in results if r.error],
+        "status": {
+            "mil": st.mil_on, "km": st.km_since_clear, "minutes": st.minutes_since_clear,
+            "warmups": st.warmups_since_clear, "km_with_mil": st.km_with_mil,
+            "fuel_system": _split_value("Fuel system", st.fuel_system) if st.fuel_system else None,
+            "errors": st.errors or [],
+        },
+        "freeze": {"code": ff.code, "desc": dtc.describe(ff.code) if ff.code else "", "error": ff.error,
+                   "groups": groups, "trims": trims, "since_start": ffd.get("Time since engine start", "")},
+        "notes": {"permanent": dtc.PERMANENT_NOTE, "pending": dtc.PENDING_NOTE},
+        "details": [
+            {"title": "Readiness and status", "text": dtc.format_status(st)},
+            {"title": "On-board test results", "text": dtc.format_test_results(tests)},
+            {"title": "Vehicle information", "text": dtc.format_vehicle_info(vi)},
+        ],
+        "text": "\n\n".join([dtc.format_results(results), dtc.format_freeze_frame(ff), dtc.format_status(st),
+                              dtc.format_test_results(tests), dtc.format_vehicle_info(vi)]),
+    })
 
 
 def clear_codes(js_request) -> str:

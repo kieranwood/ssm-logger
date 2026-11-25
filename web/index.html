@@ -211,23 +211,32 @@
 <footer id="cursor-readout">Drag across a chart to zoom in · double-click to zoom out</footer>
 <div id="drop" hidden><div>Drop the CSV to open it</div></div>
 
-<dialog id="codes-dialog">
-  <div class="dialog-head"><b>Fault codes</b></div>
-  <pre id="codes-text"></pre>
-  <div id="codes-confirm" class="confirm" hidden>
-    <p><b>Clear all codes?</b> Clearing also erases the freeze frame above and resets every
-      readiness monitor; the car won't pass an emissions inspection until they complete again.
-      Codes for a fault that is still present will come back. Do this with the ignition on and the
-      engine off.</p>
-    <button id="codes-clear-yes" class="btn danger">Clear codes</button>
-    <button id="codes-clear-cancel" class="btn">Cancel</button>
+<dialog id="codes-dialog" class="fc" aria-labelledby="fc-title">
+  <header class="fc-head">
+    <div class="fh-text">
+      <h2 id="fc-title">Fault codes</h2>
+      <div class="meta num"><span id="fc-ecu"></span><span id="fc-when"></span></div>
+    </div>
+    <button id="codes-x" class="btn icon-btn ghost" aria-label="Close fault codes"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </header>
+  <div class="fc-body" id="fc-body" aria-live="polite"></div>
+  <div id="codes-confirm" class="fc-confirm" role="alertdialog" aria-labelledby="fc-clr-title" hidden>
+    <div id="fc-clr-title" class="fc-confirm-title">Clear fault codes?</div>
+    <p id="fc-clr-text">This turns off the check-engine light, erases the freeze frame and resets every readiness
+      monitor, so the car won't pass an emissions inspection until they've run again. Codes for a fault that is
+      still present will come back. Do this with the ignition on and the engine off.</p>
+    <div class="fc-confirm-buttons">
+      <button id="codes-clear-cancel" class="btn">Cancel</button>
+      <button id="codes-clear-yes" class="btn danger">Clear codes</button>
+    </div>
   </div>
-  <div class="dialog-buttons">
-    <button id="codes-reread" class="btn">Read again</button>
-    <button id="codes-clear" class="btn" disabled>Clear codes…</button>
+  <footer class="fc-foot">
+    <button id="codes-reread" class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.6-6.4"></path><path d="M21 3v6h-6"></path></svg><span>Read again</span></button>
+    <button id="codes-copy" class="btn" disabled><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path></svg><span>Copy report</span></button>
+    <button id="codes-clear" class="btn danger-text" disabled>Clear codes…</button>
     <span class="spacer"></span>
-    <button id="codes-close" class="btn">Close</button>
-  </div>
+    <button id="codes-close" class="btn light">Close</button>
+  </footer>
 </dialog>
 
 <dialog id="cap-dialog">

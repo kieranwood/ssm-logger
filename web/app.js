@@ -1475,40 +1475,239 @@ function addMark() {
 
 // ------------------------------------------------------------------ fault codes
 
+const codesState = { data: null, reading: false, cleared: false };
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function codesMessage(text) {
+  $("fc-body").replaceChildren(el("p", "fc-msg", text));
+}
+
+function setCodesBusy(busy, label = "Reading…") {
+  codesState.reading = busy;
+  const b = $("codes-reread");
+  b.classList.toggle("busy", busy);
+  b.disabled = busy;
+  b.querySelector("span").textContent = busy ? label : "Read again";
+  $("codes-clear").disabled = busy || !codesState.data;
+  $("codes-copy").disabled = busy || !codesState.data;
+}
+
 async function readCodes() {
   const dlg = $("codes-dialog");
-  $("codes-text").textContent = "Reading…";
-  $("codes-clear").disabled = true;
   $("codes-confirm").hidden = true;
-  if (!dlg.open) dlg.showModal();
+  $("fc-ecu").textContent = state.rec?.info || "";
+  if (!dlg.open) {
+    codesState.data = null;
+    codesState.cleared = false;
+    codesMessage("Reading fault codes from the ECU…");
+    dlg.showModal();
+  }
+  if (codesState.reading) return;
   if (!state.session?.op) {
-    $("codes-text").textContent = "Not connected to the ECU right now - wait for logging to resume, then try again.";
+    codesState.data = null;
+    setCodesBusy(false);
+    codesMessage("Not connected to the ECU right now - wait for logging to resume, then try again.");
     return;
   }
+  $("fc-when").textContent = "Reading from ECU…";
+  setCodesBusy(true);
   try {
-    const text = await state.session.runJob((request) => state.py.globals.get("read_codes").callPromising(request));
-    $("codes-text").textContent = text;
-    $("codes-clear").disabled = false;
+    const json = await state.session.runJob((request) => state.py.globals.get("read_codes_json").callPromising(request));
+    codesState.data = JSON.parse(json);
+    const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    $("fc-when").textContent = codesState.cleared ? "Read just now, after clearing" : `Read at ${now}`;
+    renderCodes(codesState.data);
   } catch (e) {
-    $("codes-text").textContent = jspiHint(e);
+    codesState.data = null;
+    $("fc-when").textContent = "";
+    codesMessage(jspiHint(e));
+  } finally {
+    setCodesBusy(false);
   }
+}
+
+const CAR_ICON = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 10h2l2-3h6l1 3h2v2h2v-2h1v6h-1v-2h-2v3h-3l-2 2H9l-2-2H5z"></path></svg>';
+const CHECK_ICON = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12l3 3 5-6"></path></svg>';
+const LOCK_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" ' +
+  'stroke-linecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>';
+
+function tile(k, v, sub, cls = "") {
+  const t = el("div", `fc-tile ${cls}`);
+  t.append(el("div", "k", k), el("div", `v ${cls.includes("text") ? "text" : "num"}`, v));
+  if (sub) t.append(el("div", "s num", sub));
+  return t;
+}
+
+function renderCodes(d) {
+  const body = $("fc-body");
+  body.replaceChildren();
+  const st = d.status;
+
+  // summary tiles
+  const tiles = el("div", "fc-tiles");
+  if (st.mil != null) {
+    const m = el("div", `fc-tile mil ${st.mil ? "on" : "off"}`);
+    m.innerHTML = CAR_ICON;
+    const txt = el("div");
+    txt.append(el("div", "k", "Check engine"), el("div", "v", st.mil ? "On" : "Off"));
+    if (st.km_with_mil) txt.append(el("div", "s num", `${st.km_with_mil} km with light on`));
+    m.append(txt);
+    tiles.append(m);
+  }
+  if (st.km != null) tiles.append(tile("Since cleared", `${st.km} km`, `${Math.round(st.km * 0.621371)} miles`));
+  if (st.minutes != null) {
+    const h = Math.floor(st.minutes / 60), mm = st.minutes % 60;
+    tiles.append(tile("Run time", h ? `${h} h ${mm} min` : `${mm} min`, "since cleared"));
+  }
+  if (st.warmups != null) tiles.append(tile("Warm-ups", String(st.warmups), "since cleared"));
+  if (st.fuel_system) tiles.append(tile("Fuel system now", st.fuel_system[0], st.fuel_system[1], "text"));
+  if (tiles.children.length) body.append(tiles);
+
+  // a card per code, or the all-clear
+  const stored = d.codes.filter((c) => c.kinds.includes("Stored"));
+  if (codesState.cleared && !stored.length) {
+    const ok = el("div", "fc-clear-ok");
+    ok.innerHTML = CHECK_ICON;
+    const perm = d.codes.filter((c) => c.kinds.includes("Permanent")).map((c) => c.code);
+    const t = el("div");
+    t.append(el("b", "", "Stored and pending codes cleared"),
+      el("span", "", (perm.length ? `${perm.join(", ")} ${perm.length > 1 ? "are" : "is"} still held as permanent ` +
+        "until the ECU's own check passes. " : "") + "Freeze frame data was erased with the codes."));
+    ok.append(t);
+    body.append(ok);
+  } else if (!d.codes.length && !d.mode_errors.length) {
+    const ok = el("div", "fc-clear-ok");
+    ok.innerHTML = CHECK_ICON;
+    const t = el("div");
+    t.append(el("b", "", "No fault codes"), el("span", "", "Nothing stored, pending or permanent."));
+    ok.append(t);
+    body.append(ok);
+  }
+  for (const c of d.codes) {
+    if (codesState.cleared && !c.kinds.includes("Stored") && !c.kinds.includes("Pending")) continue;
+    const card = el("article", `fc-code ${c.kinds.includes("Stored") ? "stored" : ""}`);
+    const top = el("div", "fc-code-top");
+    const name = el("div", "fc-code-name");
+    name.append(el("b", "", c.desc || "No description for this code"),
+      el("span", "", [c.bank, c.system, c.source].filter(Boolean).join(" · ")));
+    const badges = el("div", "fc-badges");
+    for (const k of c.kinds) {
+      const b = el("span", `fc-badge ${k.toLowerCase()}`);
+      b.innerHTML = k === "Permanent" ? LOCK_ICON : '<span class="dot"></span>';
+      b.append(k);
+      badges.append(b);
+    }
+    top.append(el("div", "fc-code-id num", c.code), name, badges);
+    card.append(top);
+    const text = el("div", "fc-code-text");
+    if (c.explain) text.append(el("p", "", c.explain));
+    if (!c.desc) text.append(el("p", "", "Look this code up in the service manual."));
+    if (c.kinds.includes("Pending") && !c.kinds.includes("Stored")) text.append(el("p", "", d.notes.pending));
+    if (c.kinds.includes("Permanent")) text.append(el("p", "", d.notes.permanent));
+    if (text.children.length) card.append(text);
+    body.append(card);
+  }
+  for (const m of d.mode_errors) body.append(el("div", "fc-note", `${m.title} codes: ${m.error}`));
+
+  // freeze frame
+  const ff = d.freeze;
+  if (ff.code && ff.groups.length) {
+    const sec = el("section");
+    const head = el("div", "fc-section-head");
+    const h = el("h3", "", "Freeze frame");
+    h.append(el("small", "", `snapshot when ${ff.code} set`));
+    head.append(h);
+    if (ff.since_start) head.append(el("span", "num", `${ff.since_start} after engine start`));
+    const grid = el("div", "fc-ff");
+    for (const g of ff.groups) {
+      const box = el("div", "fc-ff-group");
+      box.append(el("h4", "", g.title));
+      for (const r of g.rows) {
+        const row = el("div", "fc-row");
+        const v = el("span", "v num", r.v);
+        if (/fuel trim/i.test(r.k) && Math.abs(parseFloat(r.v)) > 10) v.classList.add("warn");
+        if (r.sub) v.append(el("small", "num", r.sub));
+        row.append(el("span", "k", r.k), v);
+        box.append(row);
+      }
+      grid.append(box);
+    }
+    sec.append(head, grid);
+    // combined trim bar: long-term solid, short-term stacked on top of it, ±50% scale
+    if (ff.trims.short != null || ff.trims.long != null) {
+      const s = ff.trims.short ?? 0, l = ff.trims.long ?? 0, tot = s + l, SCALE = 50;
+      const bar = el("div", "fc-trim-bar");
+      bar.append(el("div", "zero"));
+      const seg = (from, to, cls) => {
+        const a = Math.max(-SCALE, Math.min(SCALE, from)), b = Math.max(-SCALE, Math.min(SCALE, to));
+        const f = el("div", `fill ${cls}`);
+        f.style.left = `${50 + (Math.min(a, b) / SCALE) * 50}%`;
+        f.style.width = `${(Math.abs(b - a) / SCALE) * 50}%`;
+        bar.append(f);
+      };
+      seg(0, l, "long");
+      seg(l, tot, "short");
+      const wrap = el("div", `fc-trim ${Math.abs(tot) > 10 ? "warn" : "ok"}`);
+      const fmt = (x) => `${x >= 0 ? "+" : "−"}${Math.abs(x).toFixed(1)}`;
+      wrap.append(el("span", "", "Combined fuel trim at the time"), bar, el("span", "total num", `${fmt(tot)}%`),
+        el("span", "parts num", `short ${fmt(s)} · long ${fmt(l)} · scale ±${SCALE}%`));
+      sec.append(wrap);
+    }
+    body.append(sec);
+  } else if (ff.error) {
+    body.append(el("div", "fc-note", `Freeze frame: ${ff.error}`));
+  }
+
+  // the rest as text, folded away
+  const more = el("div", "fc-more");
+  for (const x of d.details) {
+    const det = el("details");
+    det.append(el("summary", "", x.title), el("pre", "", x.text));
+    more.append(det);
+  }
+  body.append(more);
 }
 
 async function clearCodes() {
   $("codes-confirm").hidden = true;
-  $("codes-text").textContent = "Clearing…";
+  setCodesBusy(true, "Clearing…");
+  $("fc-when").textContent = "Clearing…";
   try {
     const err = await state.session.runJob((request) => state.py.globals.get("clear_codes").callPromising(request));
     if (err) {
-      $("codes-text").textContent = `Clear failed: ${err}`;
+      setCodesBusy(false);
+      $("fc-when").textContent = "";
+      codesMessage(`Clear failed: ${err}`);
       return;
     }
   } catch (e) {
-    $("codes-text").textContent = jspiHint(e);
+    setCodesBusy(false);
+    codesMessage(jspiHint(e));
     return;
   }
+  codesState.cleared = true;
+  setCodesBusy(false);
   await readCodes();
-  $("codes-text").textContent = `Codes cleared.\n\n${$("codes-text").textContent}`;
+}
+
+async function copyCodes() {
+  if (!codesState.data) return;
+  const b = $("codes-copy").querySelector("span");
+  try {
+    await navigator.clipboard.writeText(codesState.data.text);
+    b.textContent = "Copied";
+  } catch {
+    b.textContent = "Copy failed";
+  }
+  setTimeout(() => { b.textContent = "Copy report"; }, 1600);
 }
 
 function jspiHint(e) {
@@ -1911,10 +2110,15 @@ $("record").addEventListener("click", toggleRecording);
 $("mark").addEventListener("click", addMark);
 $("codes").addEventListener("click", readCodes);
 $("codes-reread").addEventListener("click", readCodes);
-$("codes-clear").addEventListener("click", () => { $("codes-confirm").hidden = false; });
+$("codes-clear").addEventListener("click", () => {
+  $("codes-confirm").hidden = false;
+  $("codes-clear-cancel").focus();
+});
 $("codes-clear-cancel").addEventListener("click", () => { $("codes-confirm").hidden = true; });
 $("codes-clear-yes").addEventListener("click", clearCodes);
 $("codes-close").addEventListener("click", () => $("codes-dialog").close());
+$("codes-x").addEventListener("click", () => $("codes-dialog").close());
+$("codes-copy").addEventListener("click", copyCodes);
 $("autocap").addEventListener("click", () => setArmed(!state.capArmed));
 $("alerts").addEventListener("click", () => setAlertsOn(!state.alertsOn));
 $("alert-add").addEventListener("click", () => $("alert-rules").appendChild(ruleRow({ channel: "", op: ">", value: 0, hold_s: 2, enabled: true })));

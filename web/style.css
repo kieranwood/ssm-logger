@@ -683,13 +683,109 @@ dialog .sub, #cap-dialog .sub { color: var(--muted); font-size: 13px; line-heigh
 dialog p { line-height: 1.5; }
 dialog label { cursor: pointer; }
 .dialog-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
-#codes-text {
-  max-height: 55vh; overflow: auto; margin: 0 0 12px; padding: 14px 16px;
-  background: var(--panel); border: 1px solid var(--border-soft); border-radius: 14px;
-  font: 12px/1.6 var(--mono); white-space: pre; color: var(--text-2);
-}
 .confirm { margin-bottom: 12px; padding: 16px; border: 1px solid var(--problem); background: var(--problem-tint); border-radius: 14px; }
 .confirm p { margin-top: 0; }
+/* fault codes */
+dialog.fc { width: min(920px, calc(100vw - 32px)); padding: 0; display: none; }
+dialog.fc[open] { display: flex; flex-direction: column; }
+.fc-head { display: flex; align-items: flex-start; gap: 16px; padding: 22px 20px 18px 28px; border-bottom: 1px solid var(--divider); }
+.fc-head h2 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.fc-head .meta { margin-top: 6px; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.fc-body { flex: 1 1 auto; overflow-y: auto; padding: 22px 28px 8px; display: flex; flex-direction: column; gap: 22px; }
+.fc-msg { color: var(--text-3); line-height: 1.5; padding: 8px 0 16px; }
+.fc-tiles {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
+  background: var(--divider); border: 1px solid var(--divider); border-radius: 14px; overflow: hidden;
+}
+.fc-tile { background: var(--panel); padding: 14px 16px; min-width: 0; }
+.fc-tile .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.fc-tile .v { font-size: 17px; margin-top: 4px; }
+.fc-tile .s { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.fc-tile .v.text { font-size: 14px; line-height: 1.3; }
+.fc-tile.mil { display: flex; align-items: center; gap: 12px; }
+.fc-tile.mil .v { font-weight: 600; margin-top: 2px; }
+.fc-tile.mil.on { background: var(--warning-tint); color: var(--warning); }
+.fc-tile.mil.off { color: var(--ok); }
+.fc-tile.mil.on .v, .fc-tile.mil.off .v { color: inherit; }
+.fc-code { border: 1px solid var(--border); background: var(--panel); border-radius: 16px; overflow: hidden; }
+.fc-code.stored { border-color: var(--warning-border); background: color-mix(in srgb, var(--warning-tint) 45%, var(--panel)); }
+.fc-code-top { padding: 20px 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
+.fc-code-id { font-size: 40px; font-weight: 600; letter-spacing: 0.02em; line-height: 1; color: var(--text); }
+.fc-code.stored .fc-code-id { color: var(--warning); }
+.fc-code-name { flex: 1 1 260px; min-width: 0; }
+.fc-code-name b { display: block; font-size: 19px; font-weight: 600; }
+.fc-code-name span { display: block; font-size: 14px; color: var(--text-3); margin-top: 3px; }
+.fc-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.fc-badge {
+  height: 28px; padding: 0 10px; border-radius: 999px; background: var(--raised); color: var(--text-2);
+  font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;
+}
+.fc-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.fc-badge.pending .dot { background: none; border: 1.5px solid currentColor; box-sizing: border-box; }
+.fc-badge.stored { background: var(--warning-tint); color: var(--warning); }
+.fc-code-text { padding: 0 22px 18px; font-size: 13px; color: var(--text-3); line-height: 1.5; display: flex; flex-direction: column; gap: 6px; }
+.fc-code-text p { margin: 0; }
+.fc-clear-ok {
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, var(--border)); background: var(--ok-tint); border-radius: 16px;
+  padding: 22px; display: flex; align-items: center; gap: 14px; color: var(--ok);
+}
+.fc-clear-ok b { display: block; font-size: 17px; }
+.fc-clear-ok span { display: block; font-size: 13px; color: var(--text-3); margin-top: 3px; }
+.fc-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.fc-section-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.fc-section-head h3 small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
+.fc-section-head .num { font-size: 12px; color: var(--muted); }
+.fc-ff { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+.fc-ff-group { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px 6px; }
+.fc-ff-group h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.fc-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--divider); }
+.fc-row .k { flex: none; font-size: 13px; color: var(--text-3); white-space: nowrap; }
+.fc-row .v small { font-family: var(--font); }
+.fc-row .v { text-align: right; font-size: 15px; font-weight: 500; }
+.fc-row .v.warn { color: var(--warning); }
+.fc-row .v small { display: block; font-size: 11px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+.fc-trim {
+  margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--border);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; font-size: 13px; color: var(--text-3);
+}
+.fc-trim-bar { flex: 1 1 200px; min-width: 160px; position: relative; height: 8px; border-radius: 4px; background: var(--raised); }
+.fc-trim-bar .zero { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--muted); }
+.fc-trim-bar .fill { position: absolute; top: 0; bottom: 0; background: currentColor; }
+.fc-trim-bar .fill.short { opacity: 0.35; }
+.fc-trim .total { font-weight: 600; }
+.fc-trim .parts { font-size: 12px; color: var(--muted); }
+.fc-trim.warn { color: var(--warning); }
+.fc-trim.ok { color: var(--ok); }
+.fc-trim > span:first-child { color: var(--text-3); }
+.fc-more { border-top: 1px solid var(--divider); padding-top: 6px; }
+.fc-more details { border-bottom: 1px solid var(--divider); }
+.fc-more summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 500; color: var(--text-2); }
+.fc-more pre {
+  max-height: 40vh; overflow: auto; margin: 0 0 12px; padding: 14px 16px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 12px; font: 12px/1.6 var(--mono); white-space: pre; color: var(--text-2);
+}
+.fc-note { font-size: 12px; color: var(--muted); }
+.fc-confirm {
+  margin: 0 28px 4px; border: 1px solid var(--problem); background: var(--problem-tint); border-radius: 14px;
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 12px;
+}
+.fc-confirm-title { font-size: 16px; font-weight: 600; color: var(--problem); }
+.fc-confirm p { margin: 0; font-size: 13px; color: var(--text-2); }
+.fc-confirm-buttons { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.fc-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 18px 28px 22px; }
+.fc-foot .spacer { flex: 1 1 auto; }
+.btn.light { background: var(--text); border-color: var(--text); color: var(--header); }
+.btn.light:hover:not(:disabled) { background: var(--text); color: var(--header); filter: brightness(0.92); }
+@keyframes fc-spin { to { transform: rotate(360deg); } }
+#codes-reread.busy svg { animation: fc-spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) { #codes-reread.busy svg { animation: none; } }
+@media (max-width: 600px) {
+  .fc-head { padding: 18px 12px 14px 18px; }
+  .fc-body { padding: 18px 16px 8px; }
+  .fc-foot { padding: 14px 16px 18px; }
+  .fc-confirm { margin: 0 16px 4px; }
+  .fc-code-id { font-size: 32px; }
+}
 table.rules { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 13px; }
 table.rules th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 0 6px; }
 table.rules td { padding: 0 6px; }

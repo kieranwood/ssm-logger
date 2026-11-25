@@ -84,6 +84,40 @@ DESCRIPTIONS = {
 }
 
 
+# A plain-English line or two for the codes most likely to come up while chasing fuelling faults.
+EXPLANATIONS = {
+    "P0171": "The ECU is adding more fuel than its normal limit to hold the target mixture. That usually "
+             "means air getting in that the MAF didn't measure (a vacuum or intake leak), an exhaust leak "
+             "ahead of the front A/F sensor, or too little fuel.",
+    "P0172": "The ECU is removing more fuel than its normal limit. Common causes are a leaking injector, "
+             "high fuel pressure, a MAF reading high, or a biased front A/F sensor.",
+    "P0133": "The front A/F sensor responds too slowly to mixture changes - usually an ageing sensor, "
+             "or an exhaust leak near it.",
+    "P2195": "The front A/F sensor keeps reporting lean while the ECU corrects. A failing sensor or an "
+             "exhaust leak before it can cause this.",
+    "P2196": "The front A/F sensor keeps reporting rich while the ECU corrects. Often the sensor itself.",
+    "P2096": "The rear O2 sensor sees a leaner mixture after the catalyst than the front sensor reports - "
+             "often an exhaust leak between them, or a biased front sensor.",
+    "P2097": "The rear O2 sensor sees a richer mixture after the catalyst than expected - often a biased "
+             "front A/F sensor.",
+    "P0420": "The catalyst isn't storing oxygen as well as it should, judged by the rear O2 sensor. Fix any "
+             "fuelling or exhaust-leak problems first: they can set this code on a good catalyst.",
+    "P0300": "Misfires on more than one cylinder. A lean condition, low fuel pressure or a vacuum leak "
+             "affects all cylinders; plugs or coils usually affect one.",
+    "P0128": "The coolant took too long to reach operating temperature - usually a thermostat stuck open.",
+    "P0457": "The EVAP system found a large leak, most often a loose or missing fuel cap.",
+}
+PERMANENT_NOTE = ("A permanent code can't be cleared from here: the ECU removes it by itself once its own "
+                  "check passes on later drives.")
+PENDING_NOTE = "Pending means the ECU has seen the fault once but hasn't confirmed it on a second drive yet."
+SYSTEMS = {"P": "Powertrain", "C": "Chassis", "B": "Body", "U": "Network"}
+
+
+def code_kind(code: str) -> str:
+    """Generic (SAE) or manufacturer-specific, from the code's second character."""
+    return "Generic OBD-II code" if code[1:2] in ("0", "2") else "Manufacturer-specific code"
+
+
 @dataclass
 class DtcResult:
     title: str
