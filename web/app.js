@@ -220,6 +220,51 @@ function toggleChannel(i) {
   refreshChannelList();
 }
 
+// ---- drag a chart's grip (⠿) onto another chart to move it above (top half) or below (bottom half)
+let dragChart = null;
+
+function chartDragToMove(el, grip, i) {
+  grip.addEventListener("dragstart", (e) => {
+    dragChart = i;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", state.rec.channels[i].name);
+    e.dataTransfer.setDragImage(el, 40, 12);
+    requestAnimationFrame(() => el.classList.add("dragging"));
+  });
+  grip.addEventListener("dragend", () => {
+    dragChart = null;
+    el.classList.remove("dragging");
+    for (const c of state.charts.values()) c.el.classList.remove("drop-before", "drop-after");
+  });
+  el.addEventListener("dragover", (e) => {
+    if (dragChart == null || dragChart === i) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const r = el.getBoundingClientRect();
+    const after = e.clientY > r.top + r.height / 2;
+    el.classList.toggle("drop-after", after);
+    el.classList.toggle("drop-before", !after);
+  });
+  el.addEventListener("dragleave", (e) => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove("drop-before", "drop-after");
+  });
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const after = el.classList.contains("drop-after");
+    el.classList.remove("drop-before", "drop-after");
+    if (dragChart != null) moveChart(dragChart, i, after);
+  });
+}
+
+/** Move chart i to just above (or below) chart target, keeping its zoom and data. */
+function moveChart(i, target, after) {
+  if (i === target || !state.charts.has(i) || !state.charts.has(target)) return;
+  state.selected.splice(state.selected.indexOf(i), 1);
+  state.selected.splice(state.selected.indexOf(target) + (after ? 1 : 0), 0, i);
+  const t = state.charts.get(target).el;
+  $("charts").insertBefore(state.charts.get(i).el, after ? t.nextSibling : t);
+}
+
 function updateValues() {
   const rec = state.rec;
   if (!rec) return;
@@ -313,9 +358,11 @@ function addChart(i) {
   el.className = "chart";
   const label = document.createElement("div");
   label.className = "label";
-  label.innerHTML = `<span class="n"></span><span class="v"></span>`;
+  label.innerHTML = `<span class="grip" draggable="true" title="Drag to move this chart">⠿</span>` +
+    `<span class="n"></span><span class="v"></span>`;
   label.querySelector(".n").textContent = ch.name;
   el.appendChild(label);
+  chartDragToMove(el, label.querySelector(".grip"), i);
 
   // keep charts in selection order
   const pos = state.selected.indexOf(i);

@@ -136,12 +136,90 @@ class ScrollingPlots(pg.GraphicsLayoutWidget):
 
     ⌘ (or Ctrl) + scroll zooms the chart under the cursor instead. When
     reviewing, a sideways trackpad swipe or shift+scroll moves through time.
+    Dragging a chart's title (⠿ name) up or down moves the chart.
     """
 
-    def __init__(self, scroll_area: QtWidgets.QScrollArea, on_pan_time):
+    def __init__(self, scroll_area: QtWidgets.QScrollArea, on_pan_time, win):
         super().__init__()
         self.scroll_area = scroll_area
         self.on_pan_time = on_pan_time     # callable(pixels) -> bool (True if handled)
+        self.win = win                     # MainWindow: .plots and .move_chart()
+        self._moving: int | None = None    # channel whose chart is being dragged
+        self._drop: tuple[int, bool] | None = None
+        self.drop_marker = QtWidgets.QFrame(self)
+        self.drop_marker.setStyleSheet("background:#4e9fff;")
+        self.drop_marker.hide()
+
+    # ---- drag a chart by its title to move it
+    def _scene_pos(self, ev) -> QtCore.QPointF:
+        return self.mapToScene(ev.position().toPoint())
+
+    def _title_at(self, pos: QtCore.QPointF) -> int | None:
+        for i, (p, _, _) in self.win.plots.items():
+            t = getattr(p, "_title_item", None)
+            if t is not None and t.sceneBoundingRect().adjusted(-4, -2, 4, 2).contains(pos):
+                return i
+        return None
+
+    def _drop_at(self, pos: QtCore.QPointF) -> tuple[int, bool] | None:
+        """(channel of the chart under pos, below its middle?)"""
+        best = None
+        for i, (p, _, _) in self.win.plots.items():
+            r = p.sceneBoundingRect()
+            if r.top() <= pos.y() <= r.bottom() or best is None or \
+                    abs(r.center().y() - pos.y()) < abs(best[1].center().y() - pos.y()):
+                best = (i, r)
+                if r.top() <= pos.y() <= r.bottom():
+                    break
+        if best is None:
+            return None
+        return best[0], pos.y() > best[1].center().y()
+
+    def mousePressEvent(self, ev) -> None:
+        if ev.button() == QtCore.Qt.LeftButton and len(self.win.plots) > 1:
+            i = self._title_at(self._scene_pos(ev))
+            if i is not None:
+                self._moving, self._drop = i, None
+                self.viewport().setCursor(QtCore.Qt.ClosedHandCursor)
+                ev.accept()
+                return
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev) -> None:
+        pos = self._scene_pos(ev)
+        if self._moving is None:
+            over = len(self.win.plots) > 1 and self._title_at(pos) is not None
+            if over:
+                self.viewport().setCursor(QtCore.Qt.OpenHandCursor)
+            else:
+                self.viewport().unsetCursor()
+            super().mouseMoveEvent(ev)
+            return
+        self._drop = self._drop_at(pos)
+        if self._drop is None or self._drop[0] == self._moving:
+            self.drop_marker.hide()
+        else:
+            i, after = self._drop
+            r = self.mapFromScene(self.win.plots[i][0].sceneBoundingRect()).boundingRect()
+            y = r.bottom() if after else r.top()
+            self.drop_marker.setGeometry(0, max(0, y - 1), self.width(), 3)
+            self.drop_marker.show()
+            self.drop_marker.raise_()
+        # keep the drop point in view while dragging past the edge
+        self.scroll_area.ensureVisible(0, int(ev.position().y()), 0, 40)
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev) -> None:
+        if self._moving is None:
+            super().mouseReleaseEvent(ev)
+            return
+        moving, drop = self._moving, self._drop
+        self._moving = self._drop = None
+        self.drop_marker.hide()
+        self.viewport().unsetCursor()
+        ev.accept()
+        if drop is not None and drop[0] != moving:
+            QtCore.QTimer.singleShot(0, lambda: self.win.move_chart(moving, *drop))
 
     def wheelEvent(self, ev: QtGui.QWheelEvent) -> None:
         mods = ev.modifiers()
@@ -1115,7 +1193,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rl.addWidget(self.stack)
         self.plot_scroll = QtWidgets.QScrollArea()
         self.plot_scroll.setWidgetResizable(True)
-        self.glw = ScrollingPlots(self.plot_scroll, self._pan_pixels)
+        self.glw = ScrollingPlots(self.plot_scroll, self._pan_pixels, self)
         self.glw.setBackground("#111418")
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
         self.plot_scroll.setWidget(self.glw)
@@ -1153,8 +1231,25 @@ class MainWindow(QtWidgets.QMainWindow):
             self.selected.append(i)
         elif not checked and i in self.selected:
             self.selected.remove(i)
+            self.__dict__.get("_chart_colors", {}).pop(i, None)
         else:
             return
+        self._rebuild_plots()
+
+    def _color_for(self, i: int) -> str:
+        """Each channel keeps its colour while shown, wherever its chart is moved."""
+        colors = self.__dict__.setdefault("_chart_colors", {})
+        if i not in colors:
+            used = {colors[j] for j in self.selected if j != i and j in colors}
+            colors[i] = next((c for c in COLORS if c not in used), COLORS[len(colors) % len(COLORS)])
+        return colors[i]
+
+    def move_chart(self, i: int, target: int, after: bool) -> None:
+        """Move channel i's chart to just above (or below) channel target's chart."""
+        if i == target or i not in self.selected or target not in self.selected:
+            return
+        self.selected.remove(i)
+        self.selected.insert(self.selected.index(target) + after, i)
         self._rebuild_plots()
 
     @property
@@ -1189,7 +1284,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 cmp_curve.setClipToView(True)
                 cmp_curve.setDownsampling(auto=True, method="peak")
                 p._compare_curve = cmp_curve
-            curve = p.plot(pen=pg.mkPen(COLORS[k % len(COLORS)], width=1.5), connect="finite")
+            curve = p.plot(pen=pg.mkPen(self._color_for(i), width=1.5), connect="finite")
             curve.setClipToView(True)
             curve.setDownsampling(auto=True, method="peak")
             title = pg.TextItem(anchor=(0, 0), color="#d0d6de")
@@ -1402,7 +1497,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i, (p, _, _) in self.plots.items():
             c = self.channels[i]
             v = self.buf.y[i, idx]
-            p._title_item.setText(f"{c.name}   {'' if np.isnan(v) else f'{v:.{c.decimals}f}'} {c.units}")
+            p._title_item.setText(f"⠿ {c.name}   {'' if np.isnan(v) else f'{v:.{c.decimals}f}'} {c.units}")
         if self.reviewing:
             self.statusBar().showMessage(f"Cursor at {self.buf.times[idx]:.2f} s")
 
