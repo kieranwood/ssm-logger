@@ -1818,11 +1818,20 @@ window.addEventListener("beforeunload", (e) => {
   if (state.recorder?.rows) e.preventDefault();       // unsaved recording
 });
 
+// Dropping a file opens it. Only file drags count: dragging a gauge to reorder it is a drag too.
 let dragDepth = 0;
-window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; $("drop").hidden = false; });
-window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("drop").hidden = true; } });
-window.addEventListener("dragover", (e) => e.preventDefault());
+const isFileDrag = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+window.addEventListener("dragenter", (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault(); dragDepth++; $("drop").hidden = false;
+});
+window.addEventListener("dragleave", (e) => {
+  if (!isFileDrag(e)) return;
+  if (--dragDepth <= 0) { dragDepth = 0; $("drop").hidden = true; }
+});
+window.addEventListener("dragover", (e) => { if (isFileDrag(e)) e.preventDefault(); });
 window.addEventListener("drop", (e) => {
+  if (!isFileDrag(e)) return;
   e.preventDefault();
   dragDepth = 0;
   $("drop").hidden = true;
