@@ -1290,8 +1290,13 @@ const gv = {
   specs: {}, types: [], sel: [], typeOf: {}, index: new Map(), tiles: new Map(), cache: new Map(),
   idx: 0, resetT: -Infinity, playing: false, playT: 0, lastFrame: 0,
   defaultSel: [], layout: "",      // layout: a saved layout's name, DEFAULT_LAYOUT, or "" (changed since)
+  sizeOf: {},                      // per-gauge sizes (Size: Per gauge), name -> key of TILE_SIZES
 };
 const DEFAULT_LAYOUT = "__default";
+// Per-gauge sizes, in cells of the "Per gauge" grid (50 x 45 px plus 10 px gaps): [columns, rows].
+const TILE_SIZES = { s: [3, 3, "S"], m: [4, 4, "M"], l: [6, 6, "L"], w: [6, 3, "Wide"] };
+const CELL_W = 50, CELL_GAP = 10;
+const perGauge = () => $("g-size").value === "per";
 
 function loadGaugePrefs() {
   try { return JSON.parse(localStorage.getItem(GAUGE_KEY) || "{}"); } catch { return {}; }
@@ -1305,7 +1310,10 @@ function saveGaugePrefs(custom = true, layouts = undefined) {
   const types = { ...(p.types || {}) };
   for (const n of gv.index.keys()) delete types[n];          // replace this log's overrides
   Object.assign(types, gv.typeOf);
-  const next = { selected: gv.sel.slice(), types, size: $("g-size").value,
+  const sizes = { ...(p.sizes || {}) };
+  for (const n of gv.index.keys()) delete sizes[n];
+  Object.assign(sizes, gv.sizeOf);
+  const next = { selected: gv.sel.slice(), types, size: $("g-size").value, sizes,
                  layouts: layouts ?? p.layouts ?? {}, layout: gv.layout };
   try { localStorage.setItem(GAUGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
   refreshLayoutSelect();
@@ -1332,6 +1340,7 @@ function applyLayout(name) {
   if (name === DEFAULT_LAYOUT) {
     gv.sel = gv.defaultSel.slice();
     gv.typeOf = {};
+    gv.sizeOf = {};
     $("g-size").value = "m";
   } else {
     const L = savedLayouts()[name];
@@ -1345,6 +1354,7 @@ function applyLayout(name) {
     gv.sel = sel;
     gv.typeOf = {};
     for (const [n, t] of Object.entries(L.types || {})) if (gv.index.has(n)) gv.typeOf[n] = t;
+    gv.sizeOf = pickSizes(L.sizes);
     $("g-size").value = L.size || "m";
     const missing = (L.selected || []).length - sel.length;
     if (missing) setStatus(`Layout “${name}”: ${missing} of its gauges aren't in this log.`);
@@ -1381,7 +1391,7 @@ function describeLayoutName() {
   $("layout-ok").disabled = !name || reserved;
   $("layout-msg").textContent = reserved ? "“Default” is the built-in layout; pick another name."
     : name in savedLayouts() ? `Replaces the saved layout “${name}”.`
-    : "Saves the gauges shown, their styles and the size, to use with any recording or live session.";
+    : "Saves the gauges shown, their styles and sizes, to use with any recording or live session.";
 }
 
 function confirmLayout() {
@@ -1389,7 +1399,8 @@ function confirmLayout() {
   if (layoutAction === "save") {
     const name = $("layout-name").value.trim();
     if (!name || name.toLowerCase() === "default") return;
-    layouts[name] = { selected: gv.sel.slice(), types: { ...gv.typeOf }, size: $("g-size").value };
+    layouts[name] = { selected: gv.sel.slice(), types: { ...gv.typeOf }, size: $("g-size").value,
+                      sizes: { ...gv.sizeOf } };
     gv.layout = name;
     saveGaugePrefs(false, layouts);
     setStatus(`Saved the layout “${name}”.`);
@@ -1430,6 +1441,7 @@ function setupGauges(fresh = true) {
     gv.sel = saved.length ? saved : res.selection.slice();
     gv.typeOf = {};
     for (const [n, t] of Object.entries(prefs.types || {})) if (gv.index.has(n)) gv.typeOf[n] = t;
+    gv.sizeOf = pickSizes(prefs.sizes);
     if (prefs.size) $("g-size").value = prefs.size;
     $("gauge-grid").className = `size-${$("g-size").value}`;
     gv.resetT = -Infinity;
@@ -1439,6 +1451,26 @@ function setupGauges(fresh = true) {
   gv.cache.clear();
   refreshLayoutSelect();
   buildGaugeTiles();
+}
+
+/** The saved per-gauge sizes that apply to this log's channels. */
+function pickSizes(saved) {
+  const out = {};
+  for (const [n, k] of Object.entries(saved || {})) if (gv.index.has(n) && k in TILE_SIZES) out[n] = k;
+  return out;
+}
+
+/** Per gauge mode: span each tile over its size's cells, never wider than the grid. */
+function layoutTiles() {
+  const grid = $("gauge-grid");
+  const per = perGauge();
+  const cols = Math.max(1, Math.floor((grid.clientWidth + CELL_GAP) / (CELL_W + CELL_GAP)));
+  for (const [name, tile] of gv.tiles) {
+    const [c, r] = TILE_SIZES[gv.sizeOf[name] || "m"];
+    tile.el.style.gridColumn = per ? `span ${Math.min(c, cols)}` : "";
+    tile.el.style.gridRow = per ? `span ${r}` : "";
+    tile.sizeSel.hidden = !per;
+  }
 }
 
 function buildGaugeTiles() {
@@ -1451,6 +1483,7 @@ function buildGaugeTiles() {
     const el = document.createElement("div");
     el.className = "gauge";
     el.innerHTML = `<div class="g-head"><span class="g-name"></span><select class="g-type" aria-label="Gauge style"></select>` +
+      `<select class="g-tsize" aria-label="Gauge size" title="Size of this gauge: S, M, L or Wide"></select>` +
       `<button class="g-close" aria-label="Remove gauge" title="Remove">✕</button></div><canvas></canvas>`;
     const label = el.querySelector(".g-name");
     label.textContent = name;
@@ -1465,10 +1498,21 @@ function buildGaugeTiles() {
       saveGaugePrefs();
       drawGauges();
     });
+    const sizeSel = el.querySelector(".g-tsize");
+    for (const [k, [, , text]] of Object.entries(TILE_SIZES)) sizeSel.append(new Option(text, k));
+    sizeSel.value = gv.sizeOf[name] || "m";
+    sizeSel.addEventListener("change", () => {
+      if (sizeSel.value === "m") delete gv.sizeOf[name];
+      else gv.sizeOf[name] = sizeSel.value;
+      saveGaugePrefs();
+      layoutTiles();
+      requestAnimationFrame(drawGauges);
+    });
     el.querySelector(".g-close").addEventListener("click", () => toggleGauge(name));
     grid.append(el);
-    gv.tiles.set(name, { i, canvas: el.querySelector("canvas") });
+    gv.tiles.set(name, { i, el, sizeSel, canvas: el.querySelector("canvas") });
   }
+  layoutTiles();
   drawGauges();
 }
 
@@ -1555,6 +1599,7 @@ function setView(v) {
   if (gauges) {
     if (!state.rec.live && state.cursorIdx != null) gv.idx = state.cursorIdx;
     $("g-slider").value = gv.idx;
+    layoutTiles();
     drawGauges();
   } else {
     stopPlay();
@@ -1609,9 +1654,11 @@ $("g-reset").addEventListener("click", () => {
 $("g-size").addEventListener("change", (e) => {
   $("gauge-grid").className = `size-${e.target.value}`;
   saveGaugePrefs();
+  layoutTiles();
   requestAnimationFrame(drawGauges);
 });
-window.addEventListener("resize", () => requestAnimationFrame(drawGauges));
+// the grid's width changes with the window and with the Analysis panel opening or closing
+new ResizeObserver(() => requestAnimationFrame(() => { layoutTiles(); drawGauges(); })).observe($("gauge-grid"));
 // ------------------------------------------------------------------ theme
 
 const THEME_KEY = "ssm-logger.theme";

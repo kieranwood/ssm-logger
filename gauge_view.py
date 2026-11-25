@@ -17,6 +17,11 @@ import gauges
 COLORS = {"text": "#e8eaec", "muted": "#9ba1a6", "track": "#2a2e33", "accent": "#4e9fff",
           "warn": "#f5a524", "danger": "#ff6369", "cold": "#4cc4e6", "panel": "#18191b", "border": "#2b2f33"}
 SIZES = {"s": (170, 150), "m": (220, 195), "l": (320, 280)}
+# Size "Per gauge": a grid of CELL px cells with GAP px gaps; each tile spans [columns, rows] of them
+# (the same as TILE_SIZES in web/app.js).
+CELL, GAP = (50, 45), 10
+TILE_SIZES = {"s": (3, 3, "S"), "m": (4, 4, "M"), "l": (6, 6, "L"), "w": (6, 3, "Wide")}
+PER_GAUGE = "per"
 SETTINGS = ("ssm-logger", "logger")
 DEFAULT_LAYOUT = "__default"
 
@@ -302,6 +307,15 @@ class GaugeTile(QtWidgets.QFrame):
         self.combo.setCurrentIndex(self.combo.findData(panel.type_of.get(name, default)))
         self.combo.currentIndexChanged.connect(lambda _i: panel.set_type(name, self.combo.currentData()))
         head.addWidget(self.combo)
+        self.size_combo = QtWidgets.QComboBox()
+        self.size_combo.setMaximumWidth(60)
+        self.size_combo.setToolTip("Size of this gauge: S, M, L or Wide")
+        for key, (_c_, _r, text) in TILE_SIZES.items():
+            self.size_combo.addItem(text, key)
+        self.size_combo.setCurrentIndex(self.size_combo.findData(panel.size_of.get(name, "m")))
+        self.size_combo.currentIndexChanged.connect(
+            lambda _i: panel.set_tile_size(name, self.size_combo.currentData()))
+        head.addWidget(self.size_combo)
         close = QtWidgets.QToolButton(text="✕")
         close.setAutoRaise(True)
         close.setToolTip("Remove this gauge")
@@ -310,6 +324,29 @@ class GaugeTile(QtWidgets.QFrame):
         lay.addLayout(head)
         self.canvas = GaugeCanvas()
         lay.addWidget(self.canvas, 1)
+
+    # narrow tiles: the name gets the header; the style and size pickers appear on hover
+    NARROW = 230
+
+    def _pickers(self) -> None:
+        show = self.width() > self.NARROW or self.underMouse() or self.combo.view().isVisible() \
+            or self.size_combo.view().isVisible()
+        self.combo.setVisible(show)
+        self.size_combo.setVisible(show and self.per_gauge)
+
+    per_gauge = False
+
+    def enterEvent(self, ev) -> None:
+        super().enterEvent(ev)
+        self._pickers()
+
+    def leaveEvent(self, ev) -> None:
+        super().leaveEvent(ev)
+        QtCore.QTimer.singleShot(0, self._pickers)
+
+    def resizeEvent(self, ev) -> None:
+        super().resizeEvent(ev)
+        self._pickers()
 
 
 class GaugePanel(QtWidgets.QWidget):
@@ -324,6 +361,7 @@ class GaugePanel(QtWidgets.QWidget):
         self.types: list = []
         self.sel: list[str] = []
         self.type_of: dict[str, str] = {}
+        self.size_of: dict[str, str] = {}
         self.tiles: dict[str, GaugeTile] = {}
         self.idx = 0
         self.reset_t = -math.inf
@@ -360,7 +398,7 @@ class GaugePanel(QtWidgets.QWidget):
         self.layout_combo.activated.connect(self._layout_chosen)
         bar.addWidget(self.layout_combo)
         save_btn = QtWidgets.QPushButton("Save as…")
-        save_btn.setToolTip("Save the gauges shown, their styles and the size")
+        save_btn.setToolTip("Save the gauges shown, their styles and sizes")
         save_btn.clicked.connect(self.save_layout)
         bar.addWidget(save_btn)
         self.del_btn = QtWidgets.QPushButton("Delete")
@@ -378,8 +416,9 @@ class GaugePanel(QtWidgets.QWidget):
         bar.addWidget(reset)
         bar.addWidget(QtWidgets.QLabel("Size"))
         self.size = QtWidgets.QComboBox()
-        for key, text in (("s", "Small"), ("m", "Medium"), ("l", "Large")):
+        for key, text in (("s", "Small"), ("m", "Medium"), ("l", "Large"), (PER_GAUGE, "Per gauge")):
             self.size.addItem(text, key)
+        self.size.setItemData(3, "Pick a size on each gauge", QtCore.Qt.ToolTipRole)
         self.size.currentIndexChanged.connect(self._size_changed)
         bar.addWidget(self.size)
         lay.addLayout(bar)
@@ -424,8 +463,10 @@ class GaugePanel(QtWidgets.QWidget):
             self.layout = ""
         types = {k: v for k, v in p.get("types", {}).items() if k not in self.specs}
         types.update(self.type_of)
+        sizes = {k: v for k, v in p.get("sizes", {}).items() if k not in self.specs}
+        sizes.update(self.size_of)
         QtCore.QSettings(*SETTINGS).setValue("gauges", json.dumps(
-            {"selected": self.sel, "types": types, "size": self.size.currentData(),
+            {"selected": self.sel, "types": types, "size": self.size.currentData(), "sizes": sizes,
              "layouts": p.get("layouts", {}) if layouts is None else layouts, "layout": self.layout}))
         self._refresh_layouts()
 
@@ -461,6 +502,7 @@ class GaugePanel(QtWidgets.QWidget):
         if name == DEFAULT_LAYOUT:
             self.sel = list(self.default_sel)
             self.type_of = {}
+            self.size_of = {}
             self._set_size("m")
         else:
             lay = self.saved_layouts().get(name)
@@ -476,6 +518,7 @@ class GaugePanel(QtWidgets.QWidget):
                 self.win.statusBar().showMessage(f"Layout “{name}”: {missing} of its gauges aren't in this log.", 8000)
             self.sel = sel
             self.type_of = {k: v for k, v in lay.get("types", {}).items() if k in self.specs}
+            self.size_of = self._pick_sizes(lay.get("sizes"))
             self._set_size(lay.get("size", "m"))
         self.layout = name
         self._save(custom=False)
@@ -485,7 +528,7 @@ class GaugePanel(QtWidgets.QWidget):
     def save_layout(self) -> None:
         current = self.layout if self.layout not in ("", DEFAULT_LAYOUT) else ""
         name, ok = QtWidgets.QInputDialog.getText(
-            self, "Save layout", "Saves the gauges shown, their styles and the size, to use with any\n"
+            self, "Save layout", "Saves the gauges shown, their styles and sizes, to use with any\n"
             "recording or live session. Using an existing name replaces that layout.\n\nName:", text=current)
         name = name.strip()
         if not ok or not name:
@@ -494,7 +537,8 @@ class GaugePanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(self, "Save layout", "“Default” is the built-in layout; pick another name.")
             return
         layouts = self.saved_layouts()
-        layouts[name] = {"selected": list(self.sel), "types": dict(self.type_of), "size": self.size.currentData()}
+        layouts[name] = {"selected": list(self.sel), "types": dict(self.type_of), "size": self.size.currentData(),
+                         "sizes": dict(self.size_of)}
         self.layout = name
         self._save(custom=False, layouts=layouts)
         self.win.statusBar().showMessage(f"Saved the layout “{name}”.", 6000)
@@ -529,6 +573,7 @@ class GaugePanel(QtWidgets.QWidget):
             saved = [n for n in prefs.get("selected", []) if n in self.specs]
             self.sel = saved or list(info["selection"])
             self.type_of = {k: v for k, v in prefs.get("types", {}).items() if k in self.specs}
+            self.size_of = self._pick_sizes(prefs.get("sizes"))
             self.size.blockSignals(True)
             self.size.setCurrentIndex(max(0, self.size.findData(prefs.get("size", "m"))))
             self.size.blockSignals(False)
@@ -547,17 +592,59 @@ class GaugePanel(QtWidgets.QWidget):
         self._layout()
         self.refresh()
 
+    def _pick_sizes(self, saved) -> dict:
+        """The saved per-gauge sizes that apply to this log's channels."""
+        return {k: v for k, v in (saved or {}).items() if k in self.specs and v in TILE_SIZES}
+
     def _layout(self) -> None:
+        per = self.size.currentData() == PER_GAUGE
+        for tile in self.tiles.values():
+            tile.per_gauge = per
+            tile._pickers()
+        if per:
+            self._layout_cells()
+            return
+        self.grid_host.setMinimumHeight(0)
         tw, th = SIZES[self.size.currentData() or "m"]
         width = self.scroll.viewport().width()
         cols = max(1, (width + 10) // (tw + 10))
         for i, tile in enumerate(self.tiles.values()):
             self.grid.addWidget(tile, i // cols, i % cols)
-            tile.setFixedHeight(th)
             tile.setMinimumWidth(tw - 40)
+            tile.setMaximumWidth(16777215)
+            tile.setFixedHeight(th)
         for c in range(self.grid.columnCount()):
             self.grid.setColumnStretch(c, 1 if c < cols else 0)
-        self.grid.setRowStretch(self.grid.rowCount(), 1)
+            self.grid.setColumnMinimumWidth(c, 0)
+        for r in range(self.grid.rowCount()):
+            self.grid.setRowMinimumHeight(r, 0)
+            self.grid.setRowStretch(r, 0)
+        self.grid.setRowStretch((len(self.tiles) + cols - 1) // cols, 1)
+
+    def _layout_cells(self) -> None:
+        """Per gauge: pack tiles of different sizes into a grid of cells, each in the first place it fits
+        (like CSS grid's dense packing in the browser). Placed by hand: QGridLayout stretches spanned
+        rows unevenly."""
+        (cw, ch), width = CELL, self.scroll.viewport().width()
+        cols = max(1, (width + GAP) // (cw + GAP))
+        cw = (width + GAP) / cols - GAP                     # share out the spare width
+        used: set[tuple[int, int]] = set()
+        rows = 0
+        for name, tile in self.tiles.items():
+            c, r, _ = TILE_SIZES[self.size_of.get(name, "m")]
+            c = min(c, cols)
+            y = 0
+            while (x := next((x for x in range(cols - c + 1)
+                              if all((x + i, y + j) not in used for i in range(c) for j in range(r))), None)) is None:
+                y += 1
+            used.update((x + i, y + j) for i in range(c) for j in range(r))
+            rows = max(rows, y + r)
+            tile.setParent(self.grid_host)
+            tile.setMinimumSize(0, 0)
+            tile.setFixedSize(round(c * (cw + GAP) - GAP), r * (ch + GAP) - GAP)
+            tile.move(round(x * (cw + GAP)), y * (ch + GAP))
+            tile.show()
+        self.grid_host.setMinimumHeight(max(0, rows * (ch + GAP) - GAP))
 
     def eventFilter(self, obj, ev) -> bool:
         if obj is self.scroll.viewport() and ev.type() == QtCore.QEvent.Resize:
@@ -582,6 +669,14 @@ class GaugePanel(QtWidgets.QWidget):
         self._save()
         self._build()
         self.changed.emit()
+
+    def set_tile_size(self, name: str, key: str) -> None:
+        if key == "m":
+            self.size_of.pop(name, None)
+        else:
+            self.size_of[name] = key
+        self._save()
+        self._relayout()
 
     def set_type(self, name: str, key: str) -> None:
         if key == self.specs[name]["default"]:

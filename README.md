@@ -20,8 +20,10 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   trims and AFR, a bar for throttle, voltage and airflow, a big number with a one-minute trend,
   or a lamp for switches - with coloured zones and the lowest/highest values marked. Pick which
   channels to show and change any gauge's style; recordings can be scrubbed or played back.
-  Save a set of gauges as a named layout (e.g. "Warm-up", "Fuel trims") to switch between, or
-  reset to the default.
+  Size makes every gauge Small, Medium or Large, or **Per gauge** lets you size each one (S, M, L
+  or Wide) so the important ones stand out; smaller gauges fill in the gaps beside big ones.
+  Save a set of gauges (with their styles and sizes) as a named layout (e.g. "Warm-up",
+  "Fuel trims") to switch between, or reset to the default.
 - **Fault codes**: stored, pending and permanent OBD-II codes, freeze frame, readiness
   monitors, and clearing (standard OBD-II modes 01/02/03/04/07/0A).
 - **On-board test results** (OBD mode 06): the measured value and pass/fail limits of every

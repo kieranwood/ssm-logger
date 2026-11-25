@@ -137,6 +137,10 @@ body:not(.live) .g-live { display: none; }
 #gauge-grid.size-s { --gw: 170px; --gh: 150px; }
 #gauge-grid.size-m { --gw: 220px; --gh: 195px; }
 #gauge-grid.size-l { --gw: 320px; --gh: 280px; }
+/* Per gauge: a grid of 50 x 45 px cells; each tile spans its size's cells (app.js TILE_SIZES) */
+#gauge-grid.size-per { grid-template-columns: repeat(auto-fill, minmax(50px, 1fr)); grid-auto-rows: 45px;
+  grid-auto-flow: dense; }
+#gauge-grid.size-per .gauge { height: auto; }
 .gauge {
   height: var(--gh); display: flex; flex-direction: column; padding: 6px 6px 2px;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; min-width: 0;
@@ -145,10 +149,19 @@ body:not(.live) .g-live { display: none; }
 .g-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .g-type { font-size: 11px; max-width: 92px; color: var(--muted); background: transparent; border: 1px solid transparent;
   border-radius: 4px; }
+.g-tsize { font-size: 11px; max-width: 58px; color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-radius: 4px; }
+.gauge:hover .g-tsize, .g-tsize:focus { border-color: var(--border); color: var(--text); }
 .gauge:hover .g-type, .g-type:focus { border-color: var(--border); color: var(--text); }
 .g-close { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 2px;
   visibility: hidden; }
 .gauge:hover .g-close { visibility: visible; }
+/* narrow tiles: the name gets the header; the style and size pickers appear on hover */
+.gauge { container-type: inline-size; }
+@container (max-width: 230px) {
+  .gauge:not(:hover):not(:focus-within) .g-type, .gauge:not(:hover):not(:focus-within) .g-tsize { display: none; }
+}
+@media (hover: none) { .gauge .g-type, .gauge .g-tsize:not([hidden]) { display: revert !important; } }
 .gauge canvas { flex: 1; width: 100%; min-height: 0; display: block; }
 .g-layout select { max-width: 180px; }
 #layout-dialog .sub { color: var(--muted); font-size: 13px; max-width: 380px; }

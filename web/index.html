@@ -106,16 +106,18 @@
       <span class="g-live">Newest values</span>
       <span class="spacer"></span>
       <label class="g-layout">Layout <select id="g-layout" title="Saved gauge layouts"></select></label>
-      <button id="g-layout-save" class="btn small" title="Save the gauges shown, their styles and the size">Save as…</button>
+      <button id="g-layout-save" class="btn small" title="Save the gauges shown, their styles and sizes">Save as…</button>
       <button id="g-layout-del" class="btn small" title="Delete the selected layout" disabled>Delete</button>
       <button id="g-layout-reset" class="btn small" title="Go back to the standard gauges for this car">Reset to default</button>
       <button id="g-reset" class="btn small" title="Start the min/max readings again from now">Reset min/max</button>
       <label class="g-size">Size <select id="g-size">
         <option value="s">Small</option><option value="m" selected>Medium</option><option value="l">Large</option>
+        <option value="per" title="Pick a size on each gauge">Per gauge</option>
       </select></label>
     </div>
     <div id="gauge-grid" class="size-m"></div>
-    <p class="g-hint">Click channels on the left to add or remove gauges; pick a gauge style on each.
+    <p class="g-hint">Click channels on the left to add or remove gauges; pick a gauge style on each
+      (and, with Size set to Per gauge, a size).
       Pale marks show the lowest and highest values since the start (or the last reset).</p>
   </section>
   </div>
