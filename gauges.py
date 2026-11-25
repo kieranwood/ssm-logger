@@ -12,7 +12,11 @@ Gauge types:
 
 A spec is a plain dict so it passes straight to JavaScript as JSON:
     {"type", "lo", "hi", "centre", "zones": [[from, to, level]], "step", "scale", "left", "right",
-     "decimals"}
+     "decimals", "style", "band", "mark", "status"}
+style picks the bar's shape in the browser: "split" (rich/lean halves out from the centre),
+"target" (a marker on a scale with a good band), "battery", "fader" (vertical); band is the good
+range [lo, hi] for "target"; mark a reference line (12 V on the battery); status the words shown
+for a zone level ({"danger": "REDLINE"}).
 lo/hi of None mean "fit the range to the data seen"; decimals of None mean the channel's own,
 at most 2. Zone levels: "cold", "warn", "danger".
 """
@@ -39,9 +43,10 @@ TURBO_ONLY = {"Manifold Relative Pressure", "Knock Correction"}
 
 
 def _spec(type_: str, lo=None, hi=None, centre=None, zones=(), step=None, scale=1, left="", right="",
-          decimals=None) -> dict:
+          decimals=None, style=None, band=None, mark=None, status=None) -> dict:
     return {"type": type_, "lo": lo, "hi": hi, "centre": centre, "zones": [list(z) for z in zones],
-            "step": step, "scale": scale, "left": left, "right": right, "decimals": decimals}
+            "step": step, "scale": scale, "left": left, "right": right, "decimals": decimals,
+            "style": style, "band": list(band) if band else None, "mark": mark, "status": status or {}}
 
 
 # readout precision that is easy to read at a glance
@@ -59,7 +64,7 @@ DECIMALS = {
 def _trim(limit: float = 25) -> dict:
     return _spec("centre", -limit, limit, 0,
                  [(-limit, -20, "danger"), (-20, -10, "warn"), (10, 20, "warn"), (20, limit, "danger")],
-                 step=10, left="rich", right="lean")
+                 step=10, left="rich", right="lean", style="split")
 
 
 def default_spec(name: str, units: str = "", is_switch: bool = False, P: Profile | None = None) -> dict:
@@ -77,32 +82,36 @@ def _default_spec(name: str, units: str, is_switch: bool, P: Profile | None) -> 
         return _spec("lamp", 0, 1)
     if name == "Engine Speed":
         top = math.ceil(P.redline_rpm / 1000 + 1) * 1000
-        return _spec("dial", 0, top, zones=[(P.redline_rpm, top, "danger")], step=1000, scale=1000)
+        return _spec("dial", 0, top, zones=[(P.redline_rpm - 1000, P.redline_rpm, "warn"), (P.redline_rpm, top, "danger")],
+                     step=1000, scale=1000, status={"warn": "HIGH REVS", "danger": "REDLINE"})
     if name in ("Vehicle Speed", "Memorized Cruise Speed"):
         top = 140 if u == "mph" else 220
         return _spec("dial", 0, top, step=20)
     if name == "Coolant Temperature" and u in ("°c", "c"):
         return _spec("dial", 40, 130, zones=[(40, P.cold_c, "cold"), (100, P.hot_c, "warn"), (P.hot_c, 130, "danger")],
-                     step=10)
+                     step=10, status={"cold": "WARMING UP", "warn": "HOT", "danger": "OVERHEATING"})
     if name == "Intake Air Temperature" and u in ("°c", "c"):
         return _spec("digital", -20, 80, zones=[(50, 65, "warn"), (65, 80, "danger")] if P.turbo else [])
     if name == "Manifold Relative Pressure" and u == "psi":
         top = 25 if P.turbo else 5
         return _spec("dial", -15, top, centre=0, step=5,
-                     zones=[(P.boost_psi + 15, top, "warn")] if P.turbo else [])
+                     zones=[(P.boost_psi + 15, top, "warn")] if P.turbo else [], status={"warn": "HIGH BOOST"})
     if name == "Battery Voltage":
-        return _spec("bar", 10, 16, zones=[(10, 12, "danger"), (12, 12.6, "warn"), (15, 16, "danger")], step=1)
+        return _spec("bar", 10, 16, zones=[(10, 12, "danger"), (12, 12.6, "warn"), (15, 16, "danger")], step=1,
+                     style="battery", mark=12, status={"danger": "CHECK"})
     if name in ("Total Fuel Trim", "Air/Fuel Correction #1", "Air/Fuel Correction #2",
                 "Air/Fuel Learning #1", "Air/Fuel Learning #2"):
         return _trim(35 if name == "Total Fuel Trim" else 25)
     if name.startswith("Air/Fuel Sensor") and u == "afr":
-        return _spec("centre", 10, 20, 14.7, step=2, left="rich", right="lean")
+        return _spec("centre", 10, 20, 14.7, step=2, left="rich", right="lean", style="target", band=(14.2, 15.2),
+                     zones=[(10, 13, "danger"), (13, 14.2, "warn"), (15.2, 16.5, "warn"), (16.5, 20, "danger")])
     if name.startswith("Air/Fuel Sensor") and u == "lambda":
-        return _spec("centre", 0.7, 1.3, 1.0, step=0.1, left="rich", right="lean")
+        return _spec("centre", 0.7, 1.3, 1.0, step=0.1, left="rich", right="lean", style="target", band=(0.97, 1.03),
+                     zones=[(0.7, 0.88, "danger"), (0.88, 0.97, "warn"), (1.03, 1.12, "warn"), (1.12, 1.3, "danger")])
     if name == "Rear O2 Sensor":
         return _spec("bar", 0, 1.1, step=0.2, left="lean", right="rich")
     if name == "Knock Correction":
-        return _spec("centre", -6, 6, 0, [(-6, -3, "danger"), (-3, -1, "warn")], step=2)
+        return _spec("centre", -6, 6, 0, [(-6, -3, "danger"), (-3, -1, "warn")], step=2, style="split")
     if name == "Mass Air Flow":
         return _spec("bar", 0, math.ceil(P.maf_bands[2] * 4 / 10) * 10, step=None)
     if u == "%" and not name.startswith("Air/Fuel"):

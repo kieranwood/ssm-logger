@@ -1813,7 +1813,7 @@ const gv = {
 };
 const DEFAULT_LAYOUT = "__default";
 // Per-gauge sizes, in cells of the "Per gauge" grid (50 x 45 px plus 10 px gaps): [columns, rows].
-const TILE_SIZES = { s: [3, 3, "S"], m: [4, 4, "M"], l: [6, 6, "L"], w: [6, 3, "Wide"] };
+const TILE_SIZES = { s: [3, 4, "S"], m: [4, 5, "M"], l: [6, 7, "L"], w: [6, 4, "Wide"] };
 const CELL_W = 50, CELL_GAP = 10;
 const perGauge = () => $("g-size").value === "per";
 
@@ -2001,7 +2001,7 @@ function buildGaugeTiles() {
     const ch = state.rec.channels[i];
     const el = document.createElement("div");
     el.className = "gauge";
-    el.innerHTML = `<div class="g-head"><span class="g-name"></span><select class="g-type" aria-label="Gauge style"></select>` +
+    el.innerHTML = `<div class="g-head"><span class="g-name"></span><span class="g-status" hidden></span><select class="g-type" aria-label="Gauge style"></select>` +
       `<select class="g-tsize" aria-label="Gauge size" title="Size of this gauge: S, M, L or Wide"></select>` +
       `<button class="g-close" aria-label="Remove gauge" title="Remove">✕</button></div><canvas></canvas>`;
     const label = el.querySelector(".g-name");
@@ -2030,7 +2030,7 @@ function buildGaugeTiles() {
     el.querySelector(".g-close").addEventListener("click", () => toggleGauge(name));
     dragToMove(el, name);
     grid.append(el);
-    gv.tiles.set(name, { i, el, sizeSel, canvas: el.querySelector("canvas") });
+    gv.tiles.set(name, { i, el, sizeSel, canvas: el.querySelector("canvas"), statusEl: el.querySelector(".g-status") });
   }
   layoutTiles();
   drawGauges();
@@ -2153,33 +2153,60 @@ function drawGauges() {
                 decimals: spec.decimals ?? Math.min(ch.decimals ?? 2, 2),
                 units: ch.units || "", hist, tNow: idx == null ? 0 : t[idx] };
     tile.g = g;
-    // needles and bars glide to the new value; the number shown is always the real one
+    // needles and bars spring to the new value; the number shown is always the real one
     const has = g.value != null && Number.isFinite(g.value);
-    if (!has || tile.pos == null || !Number.isFinite(tile.pos) || REDUCED_MOTION.matches) tile.pos = g.value;
+    if (!has || tile.pos == null || !Number.isFinite(tile.pos) || REDUCED_MOTION.matches) { tile.pos = g.value; tile.vel = 0; }
     g.pos = tile.pos;
+    g.now = performance.now();
+    // zone: tile border, and (except on dials, which show it inside) a status pill in the header
+    const level = has ? zoneAt(spec, g.value) : null;
+    tile.danger = level === "danger";
+    tile.el.classList.toggle("z-warn", level === "warn");
+    tile.el.classList.toggle("z-danger", level === "danger");
+    const status = has && type !== "dial" && type !== "digital" && type !== "lamp" ? zoneStatus(spec, g.value) : "";
+    tile.statusEl.hidden = !status;
+    tile.statusEl.textContent = status;
+    tile.statusEl.className = `g-status ${level || ""}`;
     drawGauge(tile.canvas, g, colors);
   }
   if (!easing && !REDUCED_MOTION.matches) { easing = true; gv.easeLast = performance.now(); requestAnimationFrame(easeFrame); }
 }
 
-const EASE_TAU = 0.12;             // seconds for a needle to cover ~63% of the way to a new value
+// A light spring: needles settle in about a third of a second with a small overshoot.
+const SPRING_W = 2 * Math.PI * 2.2, SPRING_Z = 0.72;
 let easing = false;
 
 function easeFrame(now) {
   if (state.view !== "gauges" || !state.rec) { easing = false; return; }
-  const k = 1 - Math.exp(-Math.min(0.1, (now - gv.easeLast) / 1000) / EASE_TAU);
+  const dt = Math.min(0.1, (now - gv.easeLast) / 1000);
   gv.easeLast = now;
-  let moving = false, colors = null;
+  let busy = false, colors = null;
   for (const tile of gv.tiles.values()) {
     const g = tile.g;
-    if (!g || g.value == null || !Number.isFinite(g.value) || tile.pos == null) continue;
-    const span = (g.spec.hi ?? 1) - (g.spec.lo ?? 0) || 1;
-    if (Math.abs(g.value - tile.pos) < span * 0.0015) { if (tile.pos === g.value) continue; tile.pos = g.value; }
-    else { tile.pos += (g.value - tile.pos) * k; moving = true; }
+    if (!g) continue;
+    let redraw = tile.danger;                      // the danger pulse needs every frame
+    if (g.value != null && Number.isFinite(g.value) && tile.pos != null && Number.isFinite(tile.pos)) {
+      const span = (g.spec.hi ?? 1) - (g.spec.lo ?? 0) || 1;
+      if (Math.abs(g.value - tile.pos) < span * 0.001 && Math.abs(tile.vel || 0) < span * 0.01) {
+        if (tile.pos !== g.value) { tile.pos = g.value; tile.vel = 0; redraw = true; }
+      } else {
+        for (let t = dt; t > 0; t -= 1 / 240) {     // small steps keep the spring stable
+          const h = Math.min(t, 1 / 240);
+          const acc = SPRING_W * SPRING_W * (g.value - tile.pos) - 2 * SPRING_Z * SPRING_W * (tile.vel || 0);
+          tile.vel = (tile.vel || 0) + acc * h;
+          tile.pos += tile.vel * h;
+        }
+        redraw = true;
+        busy = true;
+      }
+    }
+    if (tile.danger) busy = true;
+    if (!redraw) continue;
     g.pos = tile.pos;
+    g.now = now;
     drawGauge(tile.canvas, g, colors ??= gaugeColors());
   }
-  if (moving) requestAnimationFrame(easeFrame);
+  if (busy) requestAnimationFrame(easeFrame);
   else easing = false;
 }
 
