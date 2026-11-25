@@ -19,7 +19,8 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   gets the gauge that suits it - a needle for revs, speed, coolant and boost, a centre bar for fuel
   trims and AFR, a bar for throttle, voltage and airflow, a big number with a one-minute trend,
   or a lamp for switches - with coloured zones and the lowest/highest values marked. Pick which
-  channels to show and change any gauge's style; recordings can be scrubbed or played back.
+  channels to show, drag gauges to reorder them, and change any gauge's style; recordings can be
+  scrubbed or played back.
   Size makes every gauge Small, Medium or Large, or **Per gauge** lets you size each one (S, M, L
   or Wide) so the important ones stand out; smaller gauges fill in the gaps beside big ones.
   Save a set of gauges (with their styles and sizes) as a named layout (e.g. "Warm-up",

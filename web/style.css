@@ -145,6 +145,14 @@ body:not(.live) .g-live { display: none; }
   height: var(--gh); display: flex; flex-direction: column; padding: 6px 6px 2px;
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; min-width: 0;
 }
+.gauge { position: relative; cursor: grab; }
+.gauge.dragging { opacity: 0.4; }
+.gauge.drop-before::before, .gauge.drop-after::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--accent);
+}
+.gauge.drop-before::before { left: -7px; }
+.gauge.drop-after::after { right: -7px; }
+.g-head select, .g-head button { cursor: pointer; }
 .g-head { display: flex; align-items: center; gap: 4px; font-size: 12px; }
 .g-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .g-type { font-size: 11px; max-width: 92px; color: var(--muted); background: transparent; border: 1px solid transparent;

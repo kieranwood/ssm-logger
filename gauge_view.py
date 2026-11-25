@@ -279,9 +279,19 @@ class GaugeCanvas(QtWidgets.QWidget):
                    _c("text") if on else _c("muted"), _font(15, 650), "center", "top")
 
 
+GAUGE_MIME = "application/x-ssm-logger-gauge"
+
+
 class GaugeTile(QtWidgets.QFrame):
+    """One gauge: header (name, style, size, remove) and the canvas. Drag a tile onto another to
+    move it there."""
+
     def __init__(self, panel: "GaugePanel", name: str, units: str):
         super().__init__()
+        self.panel, self.name = panel, name
+        self._press: QtCore.QPoint | None = None
+        self.setAcceptDrops(True)
+        self.setToolTip("Drag to move this gauge")
         self.setObjectName("tile")
         self.setStyleSheet(
             f"#tile {{ background:{COLORS['panel']}; border:1px solid {COLORS['border']}; border-radius:10px; }}"
@@ -324,6 +334,60 @@ class GaugeTile(QtWidgets.QFrame):
         lay.addLayout(head)
         self.canvas = GaugeCanvas()
         lay.addWidget(self.canvas, 1)
+
+    # ---- drag to reorder: the tile is the handle; the combos and ✕ keep their own clicks
+    def mousePressEvent(self, ev) -> None:
+        if ev.button() == QtCore.Qt.LeftButton:
+            self._press = ev.position().toPoint()
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev) -> None:
+        if self._press is None or not ev.buttons() & QtCore.Qt.LeftButton or \
+                (ev.position().toPoint() - self._press).manhattanLength() < QtWidgets.QApplication.startDragDistance():
+            return super().mouseMoveEvent(ev)
+        self._press = None
+        drag = QtGui.QDrag(self)
+        mime = QtCore.QMimeData()
+        mime.setData(GAUGE_MIME, self.name.encode())
+        drag.setMimeData(mime)
+        pix = self.grab().scaledToWidth(min(self.width(), 220), QtCore.Qt.SmoothTransformation)
+        drag.setPixmap(pix)
+        drag.setHotSpot(QtCore.QPoint(pix.width() // 2, 12))
+        drag.exec(QtCore.Qt.MoveAction)
+        self.panel.drop_marker.hide()
+
+    def mouseReleaseEvent(self, ev) -> None:
+        self._press = None
+        super().mouseReleaseEvent(ev)
+
+    def _after(self, ev) -> bool:
+        return ev.position().x() > self.width() / 2
+
+    def dragEnterEvent(self, ev) -> None:
+        if ev.mimeData().hasFormat(GAUGE_MIME):
+            ev.acceptProposedAction()
+
+    def dragMoveEvent(self, ev) -> None:
+        if not ev.mimeData().hasFormat(GAUGE_MIME):
+            return
+        ev.acceptProposedAction()
+        g = self.geometry()
+        x = g.right() + 4 if self._after(ev) else g.left() - 7
+        m = self.panel.drop_marker
+        m.setGeometry(max(0, x), g.top(), 4, g.height())
+        m.show()
+        m.raise_()
+
+    def dragLeaveEvent(self, ev) -> None:
+        self.panel.drop_marker.hide()
+
+    def dropEvent(self, ev) -> None:
+        self.panel.drop_marker.hide()
+        name = bytes(ev.mimeData().data(GAUGE_MIME)).decode()
+        ev.acceptProposedAction()
+        after, target = self._after(ev), self.name
+        # after the drag finishes: moving rebuilds the tiles, including the one being dragged
+        QtCore.QTimer.singleShot(0, lambda: self.panel.move_gauge(name, target, after))
 
     # narrow tiles: the name gets the header; the style and size pickers appear on hover
     NARROW = 230
@@ -431,13 +495,16 @@ class GaugePanel(QtWidgets.QWidget):
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.scroll.setStyleSheet("background:#111418;")
         self.grid_host = QtWidgets.QWidget()
+        self.drop_marker = QtWidgets.QFrame(self.grid_host)       # where a dragged gauge will land
+        self.drop_marker.setStyleSheet(f"background:{COLORS['accent']}; border-radius:2px;")
+        self.drop_marker.hide()
         self.grid = QtWidgets.QGridLayout(self.grid_host)
         self.grid.setSpacing(10)
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.scroll.setWidget(self.grid_host)
         self.scroll.viewport().installEventFilter(self)
         lay.addWidget(self.scroll, 1)
-        hint = QtWidgets.QLabel("Tick channels on the left to add or remove gauges; pick a gauge style on each. "
+        hint = QtWidgets.QLabel("Tick channels on the left to add or remove gauges; drag a gauge to move it; pick a gauge style on each. "
                                 "Pale marks show the lowest and highest values since the start (or the last reset).")
         hint.setWordWrap(True)
         lay.addWidget(hint)
@@ -661,6 +728,16 @@ class GaugePanel(QtWidgets.QWidget):
         self._relayout()
 
     # ------------------------------------------------------------ selection
+    def move_gauge(self, name: str, target: str, after: bool) -> None:
+        """Move gauge name to just before (or after) gauge target."""
+        if name == target or name not in self.sel or target not in self.sel:
+            return
+        self.sel.remove(name)
+        self.sel.insert(self.sel.index(target) + after, name)
+        self._save()
+        self._build()
+        self.changed.emit()
+
     def toggle(self, name: str) -> None:
         if name in self.sel:
             self.sel.remove(name)

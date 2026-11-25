@@ -1509,11 +1509,59 @@ function buildGaugeTiles() {
       requestAnimationFrame(drawGauges);
     });
     el.querySelector(".g-close").addEventListener("click", () => toggleGauge(name));
+    dragToMove(el, name);
     grid.append(el);
     gv.tiles.set(name, { i, el, sizeSel, canvas: el.querySelector("canvas") });
   }
   layoutTiles();
   drawGauges();
+}
+
+// ---- drag a tile onto another to move it before (left half) or after (right half) that one
+let dragName = null, fromControl = false;
+
+function dragToMove(el, name) {
+  el.draggable = true;
+  el.title = "Drag to move this gauge";
+  el.addEventListener("mousedown", (e) => { fromControl = !!e.target.closest("select, button"); });
+  el.addEventListener("dragstart", (e) => {
+    if (fromControl) { e.preventDefault(); return; }
+    dragName = name;
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", name);
+    requestAnimationFrame(() => el.classList.add("dragging"));
+  });
+  el.addEventListener("dragend", () => {
+    dragName = null;
+    el.classList.remove("dragging");
+    for (const t of gv.tiles.values()) t.el.classList.remove("drop-before", "drop-after");
+  });
+  el.addEventListener("dragover", (e) => {
+    if (!dragName || dragName === name) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const after = e.clientX > el.getBoundingClientRect().left + el.offsetWidth / 2;
+    el.classList.toggle("drop-after", after);
+    el.classList.toggle("drop-before", !after);
+  });
+  el.addEventListener("dragleave", (e) => {
+    if (!el.contains(e.relatedTarget)) el.classList.remove("drop-before", "drop-after");
+  });
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const after = el.classList.contains("drop-after");
+    el.classList.remove("drop-before", "drop-after");
+    if (dragName) moveGauge(dragName, name, after);
+  });
+}
+
+/** Move gauge name to just before (or after) gauge target. */
+function moveGauge(name, target, after) {
+  if (name === target || !gv.sel.includes(name) || !gv.sel.includes(target)) return;
+  gv.sel.splice(gv.sel.indexOf(name), 1);
+  gv.sel.splice(gv.sel.indexOf(target) + (after ? 1 : 0), 0, name);
+  saveGaugePrefs();
+  buildGaugeTiles();
 }
 
 function toggleGauge(name) {
