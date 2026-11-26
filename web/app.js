@@ -3060,13 +3060,20 @@ function showProfileChoice(info) {
 const VT_KEY = "ssm-logger.valveTiming";
 const VT_FIELDS = ["ivo", "ivc", "ir", "evo", "evc", "er", "lift", "src"];
 const VT_ENGINES = [
-  ["fb25", "FB25 · 2.5 L, dual AVCS", "2011+ Forester and other 2.5 L FB models. Figures: service manual, engine mechanical section, General Description."],
-  ["fb20", "FB20 · 2.0 L, dual AVCS", "2012+ Impreza and XV 2.0 L. Figures: service manual, engine mechanical section, General Description."],
-  ["ej25", "EJ25 · non-turbo", "Earlier 2.5 L non-turbo. Figures: service manual, engine mechanical specifications."],
-  ["ej25t", "EJ25 · turbo", "Legacy GT, Forester XT, WRX/STI 2.5 L turbo. Figures: service manual, engine mechanical specifications."],
-  ["fa20", "FA20 · BRZ / 86", "Figures: service manual, engine mechanical section."],
+  ["fb25", "FB25 · 2.5 L, dual AVCS", "Figures from the 2015 Forester 2.5i service manual; the 2011–13 FB25 may differ. The manual gives no exhaust AVCS range."],
+  ["fb20", "FB20 · 2.0 L, dual AVCS", "No published figures found. They're in the 2012+ Impreza service manual, engine mechanical section, General Description."],
+  ["ej25", "EJ25 · non-turbo (EJ253)", "Figures from the 2010 Forester X service manual: the constant intake valve. The i-AVLS valve opens 0° BTDC / closes 10° BBDC at low speed, and 14° BTDC / 62° ABDC at high speed. Earlier EJ251/EJ252 may differ."],
+  ["ej25t", "EJ25 · turbo, intake AVCS", "Figures from the 2010 Forester XT and 2008 Impreza WRX service manuals. Dual-AVCS STI engines differ."],
+  ["fa20", "FA20 · BRZ / 86", "Published FA20D figures (not the service manual); exhaust shown at its earliest, moving up to 54° later."],
   ["custom", "Custom", "Your own figures, such as an aftermarket cam's spec card."],
 ];
+// Published figures, used until you enter your own. Max retard for the intake; the AVCS advances it.
+const VT_PUBLISHED = {
+  fb25: { ivo: "-16", ivc: "80", ir: "55", evo: "35", evc: "13", src: "2015 Forester 2.5i service manual, engine mechanical specifications" },
+  ej25: { ivo: "0", ivc: "58", ir: "0", evo: "30", evc: "14", er: "0", src: "2010 Forester X service manual (H4SO), engine mechanical specifications" },
+  ej25t: { ivo: "-5", ivc: "65", ir: "40", evo: "55", evc: "5", er: "0", src: "2010 Forester XT / 2008 Impreza WRX service manuals (H4DOTC), engine mechanical specifications" },
+  fa20: { ivo: "-24", ivc: "99", ir: "68", evo: "81", evc: "-9", er: "54", src: "FA20D valve timing published by australiancar.reviews and DSPORT (Tomei)" },
+};
 const VT_FOR_PROFILE = { na25: "fb25", na20: "fb20", turbo: "ej25t" };
 const ep = { info: null, choice: "auto", engine: "fb25", figures: {} };
 
@@ -3121,7 +3128,7 @@ function showProfileSummary() {
 }
 
 function fillValveTiming() {
-  const f = ep.figures[ep.engine] || {};
+  const f = ep.figures[ep.engine] || VT_PUBLISHED[ep.engine] || {};
   for (const k of VT_FIELDS) $(`vt-${k}`).value = f[k] ?? "";
   $("ep-engine-sub").textContent = VT_ENGINES.find(([k]) => k === ep.engine)[2];
   drawValvePreview();
@@ -3130,8 +3137,20 @@ function fillValveTiming() {
 function readValveTiming() {
   const f = {};
   for (const k of VT_FIELDS) { const v = $(`vt-${k}`).value.trim(); if (v !== "") f[k] = v; }
-  if (Object.keys(f).length) ep.figures[ep.engine] = f;
+  // keep only your own figures: unchanged published ones aren't stored, so corrections to them still arrive
+  if (Object.keys(f).length && !sameFigures(f, VT_PUBLISHED[ep.engine])) ep.figures[ep.engine] = f;
   else delete ep.figures[ep.engine];
+}
+
+function sameFigures(a, b) {
+  if (!b) return false;
+  return VT_FIELDS.every((k) => (a[k] ?? "") === (b[k] ?? "") || (k === "er" || k === "ir") && Number(a[k] || 0) === Number(b[k] || 0));
+}
+
+function currentFigures() {
+  const f = {};
+  for (const k of VT_FIELDS) { const v = $(`vt-${k}`).value.trim(); if (v !== "") f[k] = v; }
+  return f;
 }
 
 /** The 720° strip: firing TDC at 0; exhaust then intake windows, solid at rest, dashed at full AVCS travel. */
@@ -3140,8 +3159,10 @@ function drawValvePreview() {
   const ivo = num("ivo"), ivc = num("ivc"), evo = num("evo"), evc = num("evc"), ir = num("ir") || 0, er = num("er") || 0;
   const complete = [ivo, ivc, evo, evc].every((v) => v != null);
   const chip = $("ep-status");
+  const published = sameFigures(currentFigures(), VT_PUBLISHED[ep.engine]);
   chip.className = `ep-chip ${complete ? "ok" : "missing"}`;
-  chip.textContent = complete ? "Complete" : "Figures missing";
+  chip.textContent = !complete ? "Figures missing" : published ? "Published figures" : "Your figures";
+  $("ep-reset").hidden = published || !VT_PUBLISHED[ep.engine];
   $("ep-strip").closest(".ep-preview").classList.toggle("empty", !complete);
   if (!complete) { $("ep-durs").textContent = ""; return; }
   const place = (el, a, b) => {
@@ -3173,6 +3194,7 @@ function saveEngineDialog() {
 }
 
 $("ep-engine").addEventListener("change", (e) => { readValveTiming(); ep.engine = e.target.value; fillValveTiming(); });
+$("ep-reset").addEventListener("click", () => { delete ep.figures[ep.engine]; fillValveTiming(); });
 for (const k of VT_FIELDS) $(`vt-${k}`).addEventListener("input", drawValvePreview);
 $("ep-save").addEventListener("click", saveEngineDialog);
 $("ep-cancel").addEventListener("click", () => $("engine-dialog").close());

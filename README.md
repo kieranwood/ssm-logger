@@ -75,7 +75,9 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   2.5 L otherwise; choose 2.0 L by hand. The numbers live in `profiles.py`.
   On the website, Tools ▸ Engine profile… is a dialog that shows what was detected and what each
   profile changes, and also keeps your engine's valve timing figures (cam opening and closing points
-  and AVCS range, entered from the service manual) with a 720° preview, for the timing diagram.
+  and AVCS range) with a 720° preview, for the timing diagram. Published figures are filled in for
+  the FB25 (2015 Forester manual), EJ25 non-turbo and turbo (2008–2010 manuals) and FA20; the FB20 has
+  none yet. Your own figures override them.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
 
 ## Browser version
