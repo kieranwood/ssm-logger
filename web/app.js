@@ -408,6 +408,19 @@ function moveChart(i, target, after) {
   chartsChanged();
 }
 
+/** The sample the values shown refer to: the cursor's; otherwise the newest (live) or the one at the
+ *  right edge of the window in view. On the gauge view, the gauges' position. */
+function valuesIdx() {
+  const rec = state.rec, n = rec.t.length;
+  if (state.view === "gauges") return gaugeIdx();
+  let idx = state.cursorIdx != null && state.cursorIdx < n ? state.cursorIdx : rec.live && n ? n - 1 : null;
+  if (idx == null && n && state.charts.size) {
+    const [, x1] = visibleRange();
+    idx = Number.isFinite(x1) ? Math.max(0, Math.min(n - 1, bsearch(rec.t, x1 + 1e-9) - 1)) : n - 1;
+  }
+  return idx;
+}
+
 function updateValues() {
   const rec = state.rec;
   if (!rec) return;
@@ -418,6 +431,7 @@ function updateValues() {
     const [, x1] = visibleRange();
     idx = Number.isFinite(x1) ? Math.max(0, Math.min(n - 1, bsearch(rec.t, x1 + 1e-9) - 1)) : n - 1;
   }
+  if ($("timing-dialog").open) refreshTiming();
   for (const row of $("channels").querySelectorAll(".ch")) {
     const i = Number(row.dataset.idx);
     const v = idx == null ? null : rec.y[i][idx];
@@ -2379,6 +2393,7 @@ $("tools-menu").addEventListener("click", (e) => {
   else if (act === "capset") openCapSettings();
   else if (act === "alertset") openAlertSettings();
   else if (act === "engine") openEngineDialog();
+  else if (act === "timing") openTiming();
 });
 // ------------------------------------------------------------------ gauge view (gauges.py, gauges.js)
 
@@ -2866,6 +2881,7 @@ function drawGauges() {
       rows: `${(idx == null ? 0 : idx + 1).toLocaleString("en")} rows`,
     });
   }
+  if ($("timing-dialog").open) refreshTiming();
   if (!easing && !REDUCED_MOTION.matches) { easing = true; gv.easeLast = performance.now(); requestAnimationFrame(easeFrame); }
 }
 
@@ -2906,6 +2922,137 @@ function easeFrame(now) {
   if (busy) requestAnimationFrame(easeFrame);
   else easing = false;
 }
+
+// ------------------------------------------------------------------ engine timing (timing.js)
+
+const TD = {
+  rpm: "Engine Speed", adv: "Ignition Timing", pw: "Fuel Injector #1 Pulse Width",
+  icam: ["Intake VVT Advance Angle Right", "Intake VVT Advance Angle Left"],
+  ecam: ["Exhaust VVT Advance Angle Right", "Exhaust VVT Advance Angle Left"],
+};
+const STAND_IN = { ivo: 10, ivc: 50, ir: 0, evo: 50, evc: 10, er: 0 };
+let timingMounted = false;
+
+/** The engine profile's valve timing: your figures, else the published ones, else stand-ins. */
+function valveBase() {
+  const saved = loadValveTiming();
+  const detected = ep.info?.detected.key || "na25";
+  const engine = saved.engine || VT_FOR_PROFILE[profileChoice === "auto" ? detected : profileChoice] || "fb25";
+  const mine = saved.figures?.[engine], pub = VT_PUBLISHED[engine];
+  const f = mine || pub || {};
+  const num = (k) => { const v = parseFloat(f[k]); return Number.isFinite(v) ? v : null; };
+  const figs = { ivo: num("ivo"), ivc: num("ivc"), ir: num("ir") || 0, evo: num("evo"), evc: num("evc"), er: num("er") || 0 };
+  const complete = ["ivo", "ivc", "evo", "evc"].every((k) => figs[k] != null);
+  return {
+    engine, name: VT_ENGINES.find(([k]) => k === engine)?.[1] || engine,
+    kind: !complete ? "stand-in" : mine ? "yours" : "published", src: f.src || "",
+    figs: complete ? figs : STAND_IN,
+  };
+}
+
+function timingInputs() {
+  const rec = state.rec, idx = rec && rec.t.length ? valuesIdx() : null;
+  const val = (names) => {
+    for (const n of [].concat(names)) {
+      const i = rec.channels.findIndex((c) => c.name === n);
+      if (i >= 0 && idx != null) { const v = rec.y[i][idx]; if (v != null && Number.isFinite(v)) return v; }
+    }
+    return NaN;
+  };
+  // left and right banks: average what's logged
+  const avg = (names) => {
+    const vs = names.map((n) => val(n)).filter(Number.isFinite);
+    return vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : NaN;
+  };
+  const logged = (names) => [].concat(names).some((n) => rec.channels.some((c) => c.name === n));
+  return {
+    rpm: val(TD.rpm), adv: val(TD.adv), pw: val(TD.pw), icam: avg(TD.icam), ecam: avg(TD.ecam),
+    has: { icam: logged(TD.icam), ecam: logged(TD.ecam) },
+    t: idx == null ? null : rec.t[idx] - rec.t[0],
+  };
+}
+
+function openTiming() {
+  $("tools-menu").hidden = true;
+  if (!timingMounted) {
+    EngineTiming.mount($("td-rows"), $("td-wheel"));
+    timingMounted = true;
+  }
+  $("timing-dialog").showModal();
+  refreshTiming();
+  if (!REDUCED_MOTION.matches && !EngineTiming.isPlaying()) $("td-play").click();
+}
+
+function refreshTiming() {
+  if (!state.rec) return;
+  const inp = timingInputs(), base = valveBase();
+  const g = EngineTiming.draw(inp, base.figs);
+  $("td-ghost-key").hidden = !g.intGhost && !g.exhGhost;
+  const f = (v, d) => (Number.isFinite(v) ? v.toFixed(d) : "–");
+  const cycleMs = inp.rpm > 0 ? 120000 / inp.rpm : NaN;
+  const rows = [
+    ["Engine speed", f(inp.rpm, 0), "rpm", Number.isFinite(cycleMs) ? `One cycle takes ${cycleMs.toFixed(1)} ms` : "Engine not turning", "crank"],
+    ["Ignition advance", f(inp.adv, 1), "° BTDC", "Places the spark on each cylinder", "spark"],
+    ["Injector pulse", f(inp.pw, 2), "ms", g.injDeg ? `= ${g.injDeg.toFixed(0)}° of crank rotation at this speed` : "No injection at this moment", "inj"],
+    ["Intake cam advance", inp.has.icam ? f(inp.icam, 1) : "not logged", inp.has.icam ? "°" : "",
+      inp.has.icam ? "Intake AVCS; shifts the intake window earlier"
+        : "Your ECU doesn't report it as a standard parameter, so the intake window sits at its base (most retarded) position" +
+          (base.figs.ir ? ", with its AVCS range dashed" : ""), inp.has.icam ? "int" : "none"],
+  ];
+  if (inp.has.ecam) rows.push(["Exhaust cam advance", f(inp.ecam, 1), "°", "Exhaust AVCS; shifts the exhaust window", "exh"]);
+  else rows.push(["Exhaust cam advance", "not logged", "", "Your ECU doesn't report it, so the exhaust window sits at its base position" +
+    (base.figs.er ? ", with its AVCS range dashed" : ""), "none"]);
+  $("td-inputs").replaceChildren(...rows.map(([k, v, u, note, c]) => {
+    const d = document.createElement("div");
+    d.className = "td-in";
+    d.innerHTML = `<div class="r"><span class="k"></span><span class="v num" data-c="${c}"><b></b><small></small></span></div><span class="n"></span>`;
+    d.querySelector(".k").textContent = k;
+    d.querySelector("b").textContent = v;
+    d.querySelector("small").textContent = u;
+    d.querySelector(".n").textContent = note;
+    return d;
+  }));
+  $("td-when").textContent = inp.t == null ? "" : state.rec.live ? "Newest values while logging."
+    : `At ${inp.t.toFixed(1)} s in the recording (${state.view === "gauges" ? "the gauges' playback position" : "the cursor, or the right edge of the charts"}).`;
+  const duty = Number.isFinite(cycleMs) && Number.isFinite(inp.pw) ? (inp.pw / cycleMs) * 100 : NaN;
+  $("td-duty").textContent = Number.isFinite(duty) ? `${duty.toFixed(1)}%` : "–";
+  $("td-duty").dataset.z = duty >= 80 ? "warn" : "";
+  $("td-duty-fill").style.width = `${Number.isFinite(duty) ? Math.min(100, duty) : 0}%`;
+  $("td-duty-fill").dataset.z = duty >= 80 ? "warn" : "";
+  const card = $("td-base-card");
+  card.dataset.kind = base.kind;
+  $("td-base-state").textContent = { "stand-in": "stand-ins", yours: "your figures", published: "published figures" }[base.kind];
+  $("td-base-text").textContent = base.kind === "stand-in"
+    ? `From the engine profile: ${base.name}. Its figures haven't been entered yet, so stand-ins are shown.`
+    : `From the engine profile: ${base.name}.${base.src ? ` Source: ${base.src}.` : ""}`;
+  const b = base.figs, sg = (v) => (v < 0 ? `${-v}° ATDC` : `${v}° BTDC`);
+  $("td-base-figs").replaceChildren(...[
+    `IVO ${sg(b.ivo)}`, `IVC ${b.ivc}° ABDC`, `EVO ${b.evo}° BBDC`, `EVC ${b.evc < 0 ? `${-b.evc}° BTDC` : `${b.evc}° ATDC`}`,
+    b.ir ? `Intake AVCS ${b.ir}°` : "", b.er ? `Exhaust AVCS ${b.er}°` : "",
+  ].filter(Boolean).map((t) => Object.assign(document.createElement("span"), { textContent: t })));
+}
+
+for (const b of document.querySelectorAll("#td-view .seg")) {
+  b.addEventListener("click", () => {
+    const rows = b.dataset.view === "rows";
+    $("td-rows").hidden = !rows;
+    $("td-wheel").hidden = rows;
+    for (const o of document.querySelectorAll("#td-view .seg")) o.setAttribute("aria-pressed", String(o === b));
+  });
+}
+$("td-play").addEventListener("click", () => {
+  const on = !EngineTiming.isPlaying();
+  EngineTiming.setPlaying(on);
+  $("td-play").textContent = on ? "Pause" : "Play";
+  $("td-play").setAttribute("aria-pressed", String(on));
+});
+$("td-x").addEventListener("click", () => $("timing-dialog").close());
+$("timing-dialog").addEventListener("close", () => {
+  EngineTiming.setPlaying(false);
+  $("td-play").textContent = "Play";
+  $("td-play").setAttribute("aria-pressed", "false");
+});
+$("td-edit-profile").addEventListener("click", () => { $("timing-dialog").close(); openEngineDialog(); });
 
 function setView(v) {
   if (!state.rec) return;
@@ -3194,6 +3341,7 @@ function saveEngineDialog() {
 }
 
 $("ep-engine").addEventListener("change", (e) => { readValveTiming(); ep.engine = e.target.value; fillValveTiming(); });
+$("ep-timing").addEventListener("click", () => { saveEngineDialog(); openTiming(); });
 $("ep-reset").addEventListener("click", () => { delete ep.figures[ep.engine]; fillValveTiming(); });
 for (const k of VT_FIELDS) $(`vt-${k}`).addEventListener("input", drawValvePreview);
 $("ep-save").addEventListener("click", saveEngineDialog);

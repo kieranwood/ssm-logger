@@ -78,6 +78,10 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   and AVCS range) with a 720° preview, for the timing diagram. Published figures are filled in for
   the FB25 (2015 Forester manual), EJ25 non-turbo and turbo (2008–2010 manuals) and FA20; the FB20 has
   none yet. Your own figures override them.
+- **Engine timing** (website, Tools ▸ Engine timing…): one 720° cycle of all four cylinders in firing
+  order, as rows or a wheel - intake and exhaust valve windows from the engine profile, shifted by the
+  logged intake cam advance (Intake VVT Advance Angle), the spark from the ignition timing and the
+  injection length from the injector pulse, plus injector duty. Calculated, not measured.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
 
 ## Browser version

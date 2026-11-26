@@ -80,6 +80,7 @@
         <div class="menu-sep"></div>
         <div class="menu-section">Engine</div>
         <button data-act="engine" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M9 2v3M15 2v3M9 19v3M15 19v3M19 9h3M19 15h3M2 9h3M2 15h3"></path></svg></span><span class="mi-text"><b>Engine profile…</b><small id="profile-current">Automatic</small></span></button>
+        <button data-act="timing" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 12V3"></path><path d="M12 12l6 5"></path></svg></span><span class="mi-text"><b>Engine timing…</b><small>Valves, injection and spark over one 720° cycle (calculated)</small></span></button>
       </div>
     </span>
     <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
@@ -407,10 +408,57 @@
     </div>
   </div>
   <footer class="fc-foot">
+    <button id="ep-timing" class="btn">Open timing diagram</button>
     <span class="spacer"></span>
     <button id="ep-cancel" class="btn">Cancel</button>
     <button id="ep-save" class="btn primary">Save</button>
   </footer>
+</dialog>
+
+<dialog id="timing-dialog" class="td" aria-labelledby="td-title">
+  <header class="fc-head td-head">
+    <div class="fh-text">
+      <div class="td-title-row"><h2 id="td-title">Engine timing</h2>
+        <span class="td-pill"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg>Calculated, not measured</span></div>
+      <p class="ep-lead">One full 720° engine cycle, built from the logged spark advance, injector pulse and cam advance on top of the engine profile's base valve timing. Cylinders are shown in firing order 1-3-2-4.</p>
+    </div>
+    <div id="td-view" class="seg-group" role="group" aria-label="Diagram style">
+      <button class="seg" type="button" data-view="rows" aria-pressed="true">Cylinder rows</button>
+      <button class="seg" type="button" data-view="wheel" aria-pressed="false">Wheel</button>
+    </div>
+    <button id="td-play" class="btn" aria-pressed="false">Play</button>
+    <button id="td-x" class="btn icon-btn ghost" aria-label="Close engine timing"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </header>
+  <div class="td-body">
+    <section class="td-diagram" aria-label="Timing diagram">
+      <div class="td-legend">
+        <span><i class="k int"></i>Intake valve open</span><span><i class="k exh"></i>Exhaust valve open</span>
+        <span><i class="k inj"></i>Injection</span><span><i class="k spark"></i>Spark</span><span><i class="k crank"></i>Crank position (slowed)</span>
+        <span id="td-ghost-key" hidden><i class="k ghost"></i>Dashed: how far the AVCS can move it</span>
+      </div>
+      <div id="td-rows" class="td-rows"></div>
+      <div id="td-wheel" class="td-wheel-box" hidden></div>
+    </section>
+    <aside class="td-side">
+      <div class="td-card">
+        <h3>From the log</h3>
+        <div id="td-inputs"></div>
+        <p id="td-when" class="td-note"></p>
+      </div>
+      <div class="td-card">
+        <div class="td-card-head"><h3>Injector duty</h3><span id="td-duty" class="num"></span></div>
+        <div class="td-duty"><i class="limit"></i><i id="td-duty-fill" class="fill"></i><i class="mark"></i></div>
+        <p class="td-note">Pulse width ÷ time for one cycle. Above about 80% the injectors are near their limit.</p>
+      </div>
+      <div id="td-base-card" class="td-card dashed">
+        <div class="td-card-head"><h3>Base valve timing</h3><span id="td-base-state"></span></div>
+        <p id="td-base-text" class="td-note"></p>
+        <button id="td-edit-profile" class="btn small">Edit engine profile</button>
+        <div id="td-base-figs" class="td-figs num"></div>
+        <p class="td-note">Injection is placed to end as the intake valve opens. The log gives its length, not its position.</p>
+      </div>
+    </aside>
+  </div>
 </dialog>
 
 <dialog id="report-dialog">
@@ -437,6 +485,7 @@
 <script src="live.js?v=dev"></script>
 <script src="gauges.js?v=dev"></script>
 <script src="gauge-views.js?v=dev"></script>
+<script src="timing.js?v=dev"></script>
 <script src="app.js?v=dev"></script>
 </body>
 </html>
