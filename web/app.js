@@ -335,6 +335,7 @@ function refreshChannelList() {
   updateGroupCounts();
   const n = state.view === "gauges" ? gv.sel.length : state.selected.length;
   $("ch-count").textContent = `${n} ${state.view === "gauges" ? "shown" : "charted"}`;
+  $("rail-count").textContent = n;
   updateValues();
 }
 
@@ -2295,6 +2296,46 @@ $("reset").addEventListener("click", resetZoom);
 $("filter").addEventListener("input", applyChannelFilter);
 window.addEventListener("resize", resizeCharts);
 
+// ---- collapse the channel list and the top bar for more room (remembered)
+const PANES_KEY = "ssm-logger.collapsed";
+
+function setPanes({ side, top }, save = true) {
+  if (side != null) {
+    document.body.classList.toggle("side-min", side);
+    $("side-rail").hidden = !side;
+    $("side-hide").setAttribute("aria-expanded", String(!side));
+    $("side-rail").setAttribute("aria-expanded", String(!side));
+  }
+  if (top != null) {
+    document.body.classList.toggle("hdr-min", top);
+    const b = $("hdr-toggle");
+    b.setAttribute("aria-expanded", String(!top));
+    b.title = top ? "Expand the top bar (])" : "Collapse the top bar (])";
+    b.setAttribute("aria-label", top ? "Expand the top bar" : "Collapse the top bar");
+  }
+  if (save) {
+    try {
+      localStorage.setItem(PANES_KEY, JSON.stringify({
+        side: document.body.classList.contains("side-min"), top: document.body.classList.contains("hdr-min") }));
+    } catch { /* private mode */ }
+  }
+  requestAnimationFrame(() => {            // the charts and gauges take the room
+    if (!state.rec) return;
+    resizeCharts();
+    if (state.view === "gauges") { layoutTiles(); drawGauges(); }
+  });
+}
+
+const toggleSide = () => setPanes({ side: !document.body.classList.contains("side-min") });
+const toggleTop = () => setPanes({ top: !document.body.classList.contains("hdr-min") });
+$("side-hide").addEventListener("click", () => { toggleSide(); $("side-rail").focus(); });
+$("side-rail").addEventListener("click", () => { toggleSide(); $("side-hide").focus(); });
+$("hdr-toggle").addEventListener("click", toggleTop);
+try {
+  const p = JSON.parse(localStorage.getItem(PANES_KEY) || "{}");
+  setPanes({ side: !!p.side, top: !!p.top }, false);
+} catch { /* private mode */ }
+
 $("sample").addEventListener("click", () => openUrl(SAMPLE_URL));
 $("demo").addEventListener("click", startDemo);
 $("demo-empty").addEventListener("click", startDemo);
@@ -2986,6 +3027,8 @@ document.addEventListener("keydown", (e) => {
   if (!state.rec || e.target.closest?.("input:not([type=range]), select, textarea, dialog")) return;
   if (e.key === "Escape" && state.maxChart != null) { maximiseChart(null); return; }
   if (e.key === "g" || e.key === "G") { setView(state.view === "gauges" ? "charts" : "gauges"); return; }
+  if (e.key === "[") { toggleSide(); return; }
+  if (e.key === "]") { toggleTop(); return; }
   if (!state.rec.live) {
     if (e.key === " " && state.view === "gauges") { e.preventDefault(); gv.playing ? stopPlay() : startPlay(); }
     return;
