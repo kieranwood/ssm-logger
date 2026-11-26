@@ -1173,6 +1173,83 @@ dialog.td[open] { display: flex; flex-direction: column; }
   .td-foot { margin-left: 76px; }
   .td-side { max-width: none; }
 }
+/* boxer engine animation */
+.bx-stage { padding: 10px; }
+.bx-engine { width: 100%; aspect-ratio: 1200 / 760; }
+.bx-svg { display: block; width: 100%; height: 100%; }
+.bx-block { fill: var(--field); stroke: var(--border); }
+.bx-crank { fill: var(--raised); }
+.bx-main { fill: var(--muted); opacity: 0.55; }
+.bx-arrow { stroke: var(--muted); stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.bx-t { fill: var(--muted); font: 500 13px var(--font); text-anchor: middle; }
+.bx-t.bank { font-weight: 600; letter-spacing: 1.5px; }
+.bx-t.small { font-size: 12px; }
+.bx-bore { fill: var(--panel); stroke: var(--border); stroke-width: 2; transition: stroke 0.2s; }
+.bx-bore.rough { stroke: var(--g-danger); stroke-width: 4; }
+.bx-head { fill: var(--raised); stroke: var(--muted); stroke-width: 2; }
+.bx-rod { stroke: var(--muted); stroke-width: 16; stroke-linecap: round; }
+.bx-piston { fill: color-mix(in srgb, var(--muted) 70%, var(--text)); }
+.bx-ring { stroke: var(--border); stroke-width: 2; }
+.bx-pin { fill: var(--text-3); }
+.bx-pin.big { stroke: var(--raised); stroke-width: 3; }
+.bx-valve { stroke-width: 4; }
+.bx-valve.head { stroke-width: 6; stroke-linecap: round; }
+.bx-valve.int { stroke: color-mix(in srgb, var(--t-int) 35%, var(--field)); }
+.bx-valve.exh { stroke: color-mix(in srgb, var(--t-exh) 35%, var(--field)); }
+.bx-valve.int.open { stroke: var(--t-int); }
+.bx-valve.exh.open { stroke: var(--t-exh); }
+.bx-cam { stroke-width: 2; }
+.bx-cam.int { fill: color-mix(in srgb, var(--t-int) 22%, var(--field)); stroke: var(--t-int); }
+.bx-cam.exh { fill: color-mix(in srgb, var(--t-exh) 22%, var(--field)); stroke: var(--t-exh); }
+.bx-cam-c.int { fill: var(--t-int); }
+.bx-cam-c.exh { fill: var(--t-exh); }
+.bx-plug { fill: var(--text-3); }
+.bx-plug-cap { fill: var(--text); }
+.bx-spark { fill: var(--t-spark); filter: drop-shadow(0 0 10px var(--t-spark)); }
+.bx-injector { fill: color-mix(in srgb, var(--t-inj) 45%, var(--field)); }
+.bx-spray { fill: var(--t-inj); opacity: 0; }
+.bx-num { fill: var(--panel); stroke: var(--muted); stroke-width: 2; }
+.bx-num-t { fill: var(--text); font: 600 14px var(--mono); text-anchor: middle; }
+.bx-stroke { font: 600 11px var(--font); letter-spacing: 0.06em; fill: var(--muted); }
+.bx-stroke.r { text-anchor: start; }
+.bx-stroke.l { text-anchor: end; }
+.bx-stroke[data-s="power"] { fill: var(--t-spark); }
+.bx-stroke[data-s="exhaust"] { fill: var(--t-exh); }
+.bx-stroke[data-s="intake"] { fill: var(--t-int); }
+.bx-stroke[data-s="misfire"] { fill: var(--g-danger); animation: pulse 0.5s ease-in-out infinite; }
+.bx-counts { display: flex; flex-direction: column; gap: 8px; }
+.bx-count { display: flex; align-items: center; gap: 10px; }
+.bx-count > span { width: 48px; font-size: 12px; color: var(--text-3); }
+.bx-count .bar { position: relative; flex: 1 1 auto; height: 10px; border-radius: 5px; background: var(--g-track); }
+.bx-count .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; background: var(--g-danger); transition: width 0.3s; }
+.bx-count b { width: 36px; text-align: right; font-size: 13px; font-weight: 500; color: var(--muted); }
+.bx-count.hit b { color: var(--g-danger); }
+#bx-mis-card.hit { border-color: color-mix(in srgb, var(--g-danger) 45%, var(--border)); }
+.bx-finding { padding: 12px; border-radius: 12px; background: var(--warning-tint); border: 1px solid var(--warning-border); display: flex; flex-direction: column; gap: 6px; }
+.bx-finding[hidden] { display: none; }
+.bx-finding b { font-size: 13px; color: var(--warning-text); }
+.bx-finding span { font-size: 12px; line-height: 1.5; color: var(--text-2); }
+.bx-finding small { font-size: 11px; color: var(--muted); }
+.bx-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+#bx-play { min-width: 84px; justify-content: center; }
+.bx-angle { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.bx-angle .num { font-size: 30px; font-weight: 500; color: var(--text); }
+.bx-angle input { width: 100%; accent-color: var(--accent); height: 28px; }
+.bx-pins-box { width: 200px; height: 200px; margin: 0 auto; }
+.bx-pins { width: 100%; height: 100%; display: block; }
+.bx-pins-ring { fill: var(--field); stroke: var(--border); }
+.bx-arm { stroke: var(--muted); stroke-width: 12; stroke-linecap: round; }
+.bx-pin-t { fill: var(--panel); font: 600 11px var(--mono); text-anchor: middle; }
+.bx-center { text-align: center; margin-top: -6px; }
+.bx-key { font-size: 13px; color: var(--text-3); }
+.bx-key span { display: flex; align-items: center; gap: 10px; }
+.bx-key i { width: 22px; height: 6px; border-radius: 3px; flex: none; }
+.bx-key i.int { background: var(--t-int); }
+.bx-key i.exh { background: var(--t-exh); }
+.bx-key i.inj { height: 10px; background: var(--t-inj); }
+.bx-key i.spark { width: 12px; height: 12px; border-radius: 50%; margin: 0 5px; background: var(--t-spark); }
+.bx-key i.burn { height: 12px; background: #b5561a; }
+.bx-key i.mis { height: 12px; border: 2px solid var(--g-danger); box-sizing: border-box; }
 table.rules { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 13px; }
 table.rules th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 0 6px; }
 table.rules td { padding: 0 6px; }

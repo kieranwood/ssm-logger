@@ -81,6 +81,7 @@
         <div class="menu-section">Engine</div>
         <button data-act="engine" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M9 2v3M15 2v3M9 19v3M15 19v3M19 9h3M19 15h3M2 9h3M2 15h3"></path></svg></span><span class="mi-text"><b>Engine profile…</b><small id="profile-current">Automatic</small></span></button>
         <button data-act="timing" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 12V3"></path><path d="M12 12l6 5"></path></svg></span><span class="mi-text"><b>Engine timing…</b><small>Valves, injection and spark over one 720° cycle (calculated)</small></span></button>
+        <button data-act="boxer" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="9" width="6" height="6" rx="1"></rect><rect x="16" y="9" width="6" height="6" rx="1"></rect><path d="M8 12h8"></path><circle cx="12" cy="12" r="2"></circle></svg></span><span class="mi-text"><b>Engine animation…</b><small>The boxer engine moving through its cycle, with misfire counts</small></span></button>
       </div>
     </span>
     <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
@@ -426,6 +427,7 @@
       <button class="seg" type="button" data-view="rows" aria-pressed="true">Cylinder rows</button>
       <button class="seg" type="button" data-view="wheel" aria-pressed="false">Wheel</button>
     </div>
+    <button id="td-boxer" class="btn">Engine animation</button>
     <button id="td-play" class="btn" aria-pressed="false">Play</button>
     <button id="td-x" class="btn icon-btn ghost" aria-label="Close engine timing"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
   </header>
@@ -461,6 +463,55 @@
   </div>
 </dialog>
 
+<dialog id="boxer-dialog" class="td" aria-labelledby="bx-title">
+  <header class="fc-head td-head">
+    <div class="fh-text">
+      <div class="td-title-row"><h2 id="bx-title">Boxer engine</h2><span class="td-pill">Schematic · calculated timing</span></div>
+      <p class="ep-lead">Seen from above with the front of the engine at the top. Opposed pistons move out and in together; cylinders fire 1-3-2-4. Valve, spark and injection events follow the engine profile and the logged advance.</p>
+    </div>
+    <button id="bx-timing" class="btn">Timing diagram</button>
+    <button id="bx-x" class="btn icon-btn ghost" aria-label="Close engine animation"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </header>
+  <div class="td-body">
+    <section class="td-diagram bx-stage" aria-label="Engine animation"><div id="bx-engine" class="bx-engine"></div></section>
+    <aside class="td-side">
+      <div id="bx-mis-card" class="td-card">
+        <div class="td-card-head"><h3>Misfire counts</h3><span>roughness monitor</span></div>
+        <div id="bx-counts" class="bx-counts"></div>
+        <div id="bx-finding" class="bx-finding" hidden><b></b><span></span><small class="num"></small></div>
+        <p id="bx-mis-note" class="td-note"></p>
+        <button id="bx-reset" class="btn small">Reset counts</button>
+      </div>
+      <div class="td-card">
+        <div class="bx-ctl">
+          <button id="bx-play" class="btn" aria-pressed="false">Play</button>
+          <div id="bx-speed" class="seg-group" role="group" aria-label="Animation speed">
+            <button class="seg" type="button" data-speed="slow" aria-pressed="true">Slow</button>
+            <button class="seg" type="button" data-speed="medium" aria-pressed="false">Medium</button>
+            <button class="seg" type="button" data-speed="fast" aria-pressed="false">Fast</button>
+          </div>
+        </div>
+        <label class="bx-angle">Crank angle <span id="bx-ang" class="num">0°</span>
+          <input id="bx-slider" type="range" min="0" max="719" step="1" value="0"></label>
+        <div id="bx-pins" class="bx-pins-box"></div>
+        <p class="td-note bx-center">Crank throws from the front</p>
+      </div>
+      <div class="td-card bx-key">
+        <h3>Key</h3>
+        <span><i class="int"></i>Intake valve and cam</span><span><i class="exh"></i>Exhaust valve and cam</span>
+        <span><i class="inj"></i>Injector spray</span><span><i class="spark"></i>Spark</span>
+        <span><i class="burn"></i>Burning charge</span><span><i class="mis"></i>Misfire: spark, no burn</span>
+      </div>
+      <div class="td-card dashed">
+        <h3>Timing in use</h3>
+        <div id="bx-timing-figs" class="td-figs num"></div>
+        <p id="bx-timing-note" class="td-note"></p>
+        <button id="bx-edit-profile" class="btn small">Edit engine profile</button>
+      </div>
+    </aside>
+  </div>
+</dialog>
+
 <dialog id="report-dialog">
   <div class="dialog-head"><b>Report</b></div>
   <p class="sub">One HTML page to share or print (open it and print to PDF if you need one).</p>
@@ -486,6 +537,7 @@
 <script src="gauges.js?v=dev"></script>
 <script src="gauge-views.js?v=dev"></script>
 <script src="timing.js?v=dev"></script>
+<script src="boxer.js?v=dev"></script>
 <script src="app.js?v=dev"></script>
 </body>
 </html>

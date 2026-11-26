@@ -82,6 +82,10 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   order, as rows or a wheel - intake and exhaust valve windows from the engine profile, shifted by the
   logged intake cam advance (Intake VVT Advance Angle), the spark from the ignition timing and the
   injection length from the injector pulse, plus injector duty. Calculated, not measured.
+- **Engine animation** (website, Tools ▸ Engine animation…): a schematic of the boxer engine from above,
+  pistons, valves, cams, spark and injection moving through the 1-3-2-4 cycle on the same calculated
+  timing, slowed right down, with a crank-angle scrubber. Misfire counts come from the ECU's roughness
+  monitor channels; a cylinder reading above zero is drawn without a burn.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
 
 ## Browser version

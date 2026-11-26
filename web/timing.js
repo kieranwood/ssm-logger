@@ -216,5 +216,5 @@ const EngineTiming = (() => {
     return g;
   }
 
-  return { mount, draw, setPlaying, isPlaying: () => st.playing, STROKES };
+  return { mount, draw, setPlaying, isPlaying: () => st.playing, STROKES, geometry, norm };
 })();

@@ -432,6 +432,7 @@ function updateValues() {
     idx = Number.isFinite(x1) ? Math.max(0, Math.min(n - 1, bsearch(rec.t, x1 + 1e-9) - 1)) : n - 1;
   }
   if ($("timing-dialog").open) refreshTiming();
+  if ($("boxer-dialog").open) refreshBoxer();
   for (const row of $("channels").querySelectorAll(".ch")) {
     const i = Number(row.dataset.idx);
     const v = idx == null ? null : rec.y[i][idx];
@@ -2394,6 +2395,7 @@ $("tools-menu").addEventListener("click", (e) => {
   else if (act === "alertset") openAlertSettings();
   else if (act === "engine") openEngineDialog();
   else if (act === "timing") openTiming();
+  else if (act === "boxer") openBoxer();
 });
 // ------------------------------------------------------------------ gauge view (gauges.py, gauges.js)
 
@@ -2882,6 +2884,7 @@ function drawGauges() {
     });
   }
   if ($("timing-dialog").open) refreshTiming();
+  if ($("boxer-dialog").open) refreshBoxer();
   if (!easing && !REDUCED_MOTION.matches) { easing = true; gv.easeLast = performance.now(); requestAnimationFrame(easeFrame); }
 }
 
@@ -3053,6 +3056,118 @@ $("timing-dialog").addEventListener("close", () => {
   $("td-play").setAttribute("aria-pressed", "false");
 });
 $("td-edit-profile").addEventListener("click", () => { $("timing-dialog").close(); openEngineDialog(); });
+
+// ------------------------------------------------------------------ boxer engine animation (boxer.js)
+
+const ROUGH = [1, 2, 3, 4].map((n) => `Roughness Monitor Cylinder #${n}`);
+const bx = { mounted: false, resetT: -Infinity };
+
+function openBoxer() {
+  $("tools-menu").hidden = true;
+  if ($("timing-dialog").open) $("timing-dialog").close();
+  if (!bx.mounted) {
+    BoxerEngine.mount($("bx-engine"), $("bx-pins"), (a) => {
+      $("bx-ang").textContent = `${Math.round(a)}°`;
+      $("bx-slider").value = Math.round(a);
+    });
+    bx.mounted = true;
+  }
+  $("boxer-dialog").showModal();
+  refreshBoxer();
+  if (!REDUCED_MOTION.matches && !BoxerEngine.isPlaying()) $("bx-play").click();
+}
+
+function refreshBoxer() {
+  const rec = state.rec;
+  if (!rec) return;
+  const inp = timingInputs(), base = valveBase();
+  const geo = EngineTiming.geometry(inp, base.figs);
+  const idx = rec.t.length ? valuesIdx() : null;
+  // roughness monitors: samples above zero since the start (or the last reset), and which read above zero now
+  const cols = ROUGH.map((n) => rec.channels.findIndex((c) => c.name === n));
+  const have = cols.some((i) => i >= 0);
+  const counts = [0, 0, 0, 0], rough = {};
+  let lastHit = -1;
+  if (have && idx != null) {
+    const from = Math.max(0, bsearch(rec.t, bx.resetT));
+    for (let k = from; k <= idx; k++) {
+      cols.forEach((i, c) => {
+        if (i >= 0 && rec.y[i][k] > 0) { counts[c]++; lastHit = k; }
+      });
+    }
+    cols.forEach((i, c) => { if (i >= 0 && rec.y[i][idx] > 0) rough[c + 1] = true; });
+  }
+  BoxerEngine.update(geo, rough);
+
+  const total = counts.reduce((a, b) => a + b, 0), max = Math.max(1, ...counts);
+  $("bx-mis-card").classList.toggle("hit", total > 0);
+  $("bx-counts").replaceChildren(...counts.map((v, c) => {
+    const row = document.createElement("div");
+    row.className = "bx-count" + (v ? " hit" : "");
+    row.innerHTML = `<span class="num">Cyl ${c + 1}</span><div class="bar"><i></i></div><b class="num"></b>`;
+    row.querySelector("i").style.width = `${(v / max) * 100}%`;
+    row.querySelector("b").textContent = cols[c] >= 0 ? v : "–";
+    return row;
+  }));
+  const fnd = $("bx-finding");
+  fnd.hidden = !total;
+  if (total) {
+    const hit = counts.map((v, c) => (v ? c + 1 : 0)).filter(Boolean);
+    fnd.querySelector("b").textContent = hit.length === 1 ? `Roughness on cylinder ${hit[0]} only` : `Roughness on cylinders ${hit.join(", ")}`;
+    fnd.querySelector("span").textContent = hit.length === 1
+      ? "One cylinder points to its own spark plug, coil or injector. Swap its coil with another cylinder and see whether it follows."
+      : "Spread across cylinders points to something they share, such as a lean mixture, a vacuum leak or fuel pressure.";
+    const at = (name, d) => { const i = rec.channels.findIndex((c) => c.name === name); return i >= 0 && rec.y[i][lastHit] != null ? rec.y[i][lastHit].toFixed(d) : null; };
+    const ctx = [at("Engine Speed", 0) && `${Number(at("Engine Speed", 0)).toLocaleString("en")} rpm`,
+      at("Engine Load", 0) && `${at("Engine Load", 0)}% load`, at("Coolant Temperature", 0) && `coolant ${at("Coolant Temperature", 0)} °C`].filter(Boolean);
+    fnd.querySelector("small").textContent = ctx.length ? `last at ${(rec.t[lastHit] - rec.t[0]).toFixed(1)} s · ${ctx.join(" · ")}` : "";
+  }
+  $("bx-mis-note").textContent = !have ? "This log has no roughness monitor channels, so misfires can't be shown."
+    : total ? "Samples where the ECU's roughness monitor read above zero. A cylinder reading above zero right now is drawn without a burn."
+    : `No roughness counts ${rec.live ? "so far" : "up to this point in the recording"}.`;
+
+  const fmtN = (v, d, u) => (Number.isFinite(v) ? `${v.toFixed(d)}${u}` : "–");
+  $("bx-timing-figs").replaceChildren(...[
+    `spark ${fmtN(inp.adv, 1, "° BTDC")}`, inp.has.icam ? `cam adv ${fmtN(inp.icam, 1, "°")}` : "cam adv not logged",
+    `inject ${geo.injDeg ? `${geo.injDeg.toFixed(0)}°` : "–"}`, `${Number.isFinite(inp.rpm) ? Math.round(inp.rpm).toLocaleString("en") : "–"} rpm`,
+  ].map((t) => Object.assign(document.createElement("span"), { textContent: t })));
+  const rps = inp.rpm > 0 ? inp.rpm / 60 : 0;
+  $("bx-timing-note").textContent = (base.kind === "stand-in"
+    ? `Base valve timing uses stand-ins until the ${base.name} figures are entered. `
+    : `Base valve timing: ${base.name} (${base.kind === "yours" ? "your figures" : "published figures"}). `) +
+    `Motion is slowed right down${rps ? `; the real engine turns about ${Math.round(rps)} times a second at this speed` : ""}.`;
+}
+
+$("bx-play").addEventListener("click", () => {
+  const on = !BoxerEngine.isPlaying();
+  BoxerEngine.setPlaying(on);
+  $("bx-play").textContent = on ? "Pause" : "Play";
+  $("bx-play").setAttribute("aria-pressed", String(on));
+});
+for (const b of document.querySelectorAll("#bx-speed .seg")) {
+  b.addEventListener("click", () => {
+    BoxerEngine.setSpeed(b.dataset.speed);
+    for (const o of document.querySelectorAll("#bx-speed .seg")) o.setAttribute("aria-pressed", String(o === b));
+  });
+}
+$("bx-slider").addEventListener("input", (e) => {
+  if (BoxerEngine.isPlaying()) $("bx-play").click();
+  BoxerEngine.setAngle(Number(e.target.value));
+});
+$("bx-reset").addEventListener("click", () => {
+  const idx = valuesIdx();
+  bx.resetT = idx == null ? -Infinity : state.rec.t[idx] + 1e-9;
+  refreshBoxer();
+});
+$("bx-x").addEventListener("click", () => $("boxer-dialog").close());
+$("boxer-dialog").addEventListener("close", () => {
+  BoxerEngine.setPlaying(false);
+  $("bx-play").textContent = "Play";
+  $("bx-play").setAttribute("aria-pressed", "false");
+});
+$("bx-timing").addEventListener("click", () => { $("boxer-dialog").close(); openTiming(); });
+$("bx-edit-profile").addEventListener("click", () => { $("boxer-dialog").close(); openEngineDialog(); });
+$("td-boxer").addEventListener("click", openBoxer);
 
 function setView(v) {
   if (!state.rec) return;
