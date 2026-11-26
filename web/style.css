@@ -990,6 +990,72 @@ dialog.fc[open] { display: flex; flex-direction: column; }
   .fc-confirm { margin: 0 16px 4px; }
   .fc-code-id { font-size: 32px; }
 }
+/* engine profile */
+dialog.ep { width: min(1080px, calc(100vw - 32px)); padding: 0; display: none; }
+dialog.ep[open] { display: flex; flex-direction: column; }
+.ep-lead { margin: 6px 0 0; font-size: 14px; line-height: 1.5; color: var(--text-3); }
+.ep-body { flex: 1 1 auto; overflow-y: auto; display: flex; flex-wrap: wrap; }
+.ep-left { flex: 1 1 340px; max-width: 100%; padding: 22px 24px 24px 28px; border-right: 1px solid var(--divider); display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; }
+.ep-right { flex: 999 1 500px; min-width: 0; padding: 22px 28px 24px; display: flex; flex-direction: column; gap: 16px; }
+.ep-detected { padding: 14px 16px; border-radius: 14px; display: flex; gap: 12px; align-items: flex-start; color: var(--accent);
+  background: color-mix(in srgb, var(--accent-fill) 8%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent-fill) 30%, var(--border)); }
+.ep-detected svg { flex: none; margin-top: 2px; }
+.ep-detected .k { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.ep-detected .name { font-size: 15px; font-weight: 600; margin-top: 4px; color: var(--text); }
+.ep-detected .why { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+.ep-h { margin: 0; font-size: 14px; font-weight: 600; }
+.ep-opts { display: flex; flex-direction: column; gap: 8px; }
+.ep-opt { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel); cursor: pointer; }
+.ep-opt:hover { border-color: var(--muted); }
+.ep-opt:has(input:checked) { border-color: color-mix(in srgb, var(--accent-fill) 45%, var(--border)); background: color-mix(in srgb, var(--accent-fill) 7%, var(--panel)); }
+.ep-opt input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.ep-opt b { font-size: 14px; font-weight: 600; }
+.ep-opt small { display: block; font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+.ep-tag { margin-left: 8px; height: 20px; padding: 0 7px; border-radius: 999px; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center;
+  vertical-align: 1px; background: color-mix(in srgb, var(--accent-fill) 14%, var(--panel)); color: var(--accent); }
+.ep-summary { margin: 0; padding: 12px 14px 12px 30px; border-radius: 12px; background: var(--raised); font-size: 12px; line-height: 1.6; color: var(--text-3); }
+.ep-vt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ep-vt-head .ep-h { margin-right: auto; font-size: 18px; }
+.ep-vt-head select { max-width: 100%; }
+.ep-chip { height: 26px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; }
+.ep-chip.missing { background: var(--warning-tint); color: var(--warning); }
+.ep-chip.ok { background: var(--ok-tint); color: var(--ok); }
+.ep-sub { margin: -6px 0 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.ep-sets { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.ep-set { margin: 0; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px 16px; background: var(--panel); display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ep-set legend { padding: 0 6px; font-size: 13px; font-weight: 600; }
+.ep-set.intake legend { color: var(--accent); }
+.ep-set.exhaust legend { color: var(--warning); }
+.ep-set label { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-3); }
+.ep-set label span { flex: 1 1 auto; }
+.ep-set input { width: 84px; height: 40px; text-align: right; }
+.ep-set small { width: 60px; color: var(--muted); font-size: 12px; }
+.ep-col { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.ep-col .field { width: 100%; box-sizing: border-box; }
+.ep-preview { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.ep-prev-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+.ep-prev-head h4 { margin: 0 auto 0 0; font-size: 14px; font-weight: 600; }
+.ep-prev-head span { font-size: 12px; color: var(--text-3); }
+.ep-strip { position: relative; height: 96px; border-radius: 10px; background: var(--field); border: 1px solid var(--border); overflow: hidden; }
+.ep-strip .st { position: absolute; top: 0; bottom: 0; width: 25%; border-right: 1px solid var(--divider); box-sizing: border-box; }
+.ep-strip .st span { position: absolute; left: 8px; bottom: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.ep-strip .win { position: absolute; height: 16px; border-radius: 5px; box-sizing: border-box; }
+.ep-strip .win.ex { top: 16px; background: var(--g-warn); }
+.ep-strip .win.in { top: 42px; background: var(--accent-fill); }
+.ep-strip .win.ghost { background: none; opacity: 0.6; border: 1.5px dashed var(--g-warn); }
+.ep-strip .win.in.ghost { border-color: var(--accent-fill); }
+.ep-strip .tdc { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: var(--muted); }
+.ep-axis { position: relative; height: 14px; font-size: 10px; color: var(--muted); }
+.ep-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.ep-axis span:first-child, .ep-axis span:last-child { transform: none; }
+.ep-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.ep-empty { margin: 0; padding: 14px; border-radius: 10px; border: 1px dashed var(--border); font-size: 13px; color: var(--text-3); line-height: 1.5; }
+.ep-preview.empty .ep-strip, .ep-preview.empty .ep-axis, .ep-preview.empty .ep-legend { display: none; }
+.ep-preview:not(.empty) .ep-empty { display: none; }
+@media (max-width: 600px) {
+  .ep-left { border-right: 0; border-bottom: 1px solid var(--divider); padding: 18px 16px; }
+  .ep-right { padding: 18px 16px; }
+}
 table.rules { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 13px; }
 table.rules th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 0 6px; }
 table.rules td { padding: 0 6px; }

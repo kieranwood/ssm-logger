@@ -2378,6 +2378,7 @@ $("tools-menu").addEventListener("click", (e) => {
   else if (act === "readiness") openReadiness();
   else if (act === "capset") openCapSettings();
   else if (act === "alertset") openAlertSettings();
+  else if (act === "engine") openEngineDialog();
 });
 // ------------------------------------------------------------------ gauge view (gauges.py, gauges.js)
 
@@ -3039,28 +3040,143 @@ const PROFILE_KEY = "ssm-logger.profile";
 let profileChoice = "auto";
 
 function setupProfiles() {
-  const box = $("profile");
-  box.replaceChildren();
   let saved = "auto";
   try { saved = localStorage.getItem(PROFILE_KEY) || "auto"; } catch { /* private mode */ }
-  const choices = JSON.parse(state.py.globals.get("profile_choices")());
-  if (!choices.some(([k]) => k === saved)) saved = "auto";
-  for (const [key, label] of choices) {
-    // "Naturally aspirated 2.5 L (FB25, EJ25 non-turbo)" -> name and engines on two lines
-    const m = label.match(/^(.*?) \((.*)\)$/);
-    const row = document.createElement("label");
-    row.className = "mi radio";
-    row.innerHTML = `<input type="radio" name="engine"><span class="mi-text"><b></b><small></small></span>`;
-    row.querySelector("input").value = key;
-    row.querySelector("input").checked = key === saved;
-    row.querySelector("b").textContent = m ? m[1] : label;
-    row.querySelector("small").textContent = m ? m[2] : key === "auto" ? "Detect from the logged channels" : "";
-    row.querySelector("input").addEventListener("change", () => chooseProfile(key, m ? m[1] : label));
-    box.append(row);
-  }
+  const info = JSON.parse(state.py.globals.get("profile_info")());
+  if (saved !== "auto" && !info.profiles.some((p) => p.key === saved)) saved = "auto";
   profileChoice = saved;
   state.py.globals.get("set_profile")(saved);
+  showProfileChoice(info);
 }
+
+function showProfileChoice(info) {
+  const p = info.profiles.find((x) => x.key === profileChoice);
+  $("profile-current").textContent = p ? p.name : "Automatic";
+}
+
+// ---- the Engine profile dialog: the Analysis profile, and valve timing figures per engine
+// Valve timing presets name the engine and where to find its figures; the numbers are the user's own,
+// entered from the service manual (or a cam card), and kept per engine in this browser.
+const VT_KEY = "ssm-logger.valveTiming";
+const VT_FIELDS = ["ivo", "ivc", "ir", "evo", "evc", "er", "lift", "src"];
+const VT_ENGINES = [
+  ["fb25", "FB25 · 2.5 L, dual AVCS", "2011+ Forester and other 2.5 L FB models. Figures: service manual, engine mechanical section, General Description."],
+  ["fb20", "FB20 · 2.0 L, dual AVCS", "2012+ Impreza and XV 2.0 L. Figures: service manual, engine mechanical section, General Description."],
+  ["ej25", "EJ25 · non-turbo", "Earlier 2.5 L non-turbo. Figures: service manual, engine mechanical specifications."],
+  ["ej25t", "EJ25 · turbo", "Legacy GT, Forester XT, WRX/STI 2.5 L turbo. Figures: service manual, engine mechanical specifications."],
+  ["fa20", "FA20 · BRZ / 86", "Figures: service manual, engine mechanical section."],
+  ["custom", "Custom", "Your own figures, such as an aftermarket cam's spec card."],
+];
+const VT_FOR_PROFILE = { na25: "fb25", na20: "fb20", turbo: "ej25t" };
+const ep = { info: null, choice: "auto", engine: "fb25", figures: {} };
+
+function loadValveTiming() {
+  try { return JSON.parse(localStorage.getItem(VT_KEY) || "{}"); } catch { return {}; }
+}
+
+function openEngineDialog() {
+  $("tools-menu").hidden = true;
+  let info;
+  if (state.rec?.t.length) {
+    const d = dataBytes();
+    info = JSON.parse(state.py.globals.get("profile_info")(d.t, d.y, d.names));
+  } else info = JSON.parse(state.py.globals.get("profile_info")());
+  ep.info = info;
+  ep.choice = profileChoice;
+  const saved = loadValveTiming();
+  ep.figures = JSON.parse(JSON.stringify(saved.figures || {}));
+  ep.engine = saved.engine || VT_FOR_PROFILE[profileChoice === "auto" ? info.detected.key : profileChoice] || "fb25";
+
+  $("ep-det-name").textContent = info.detected.name;
+  $("ep-det-why").textContent = [state.rec?.info, info.detected.why].filter(Boolean).join(" · ");
+  const box = $("profile");
+  box.replaceChildren();
+  const opts = [{ key: "auto", name: "Automatic", engines: `Uses the detected engine: ${info.detected.name}` }, ...info.profiles];
+  for (const p of opts) {
+    const row = document.createElement("label");
+    row.className = "ep-opt";
+    row.innerHTML = `<input type="radio" name="engine"><span><b></b><small></small></span>`;
+    const input = row.querySelector("input");
+    input.value = p.key;
+    input.checked = p.key === ep.choice;
+    row.querySelector("b").textContent = p.name;
+    if (p.key === info.detected.key) row.querySelector("b").insertAdjacentHTML("beforeend", '<span class="ep-tag">Detected</span>');
+    row.querySelector("small").textContent = p.engines;
+    input.addEventListener("change", () => { ep.choice = p.key; showProfileSummary(); });
+    box.append(row);
+  }
+  showProfileSummary();
+
+  const sel = $("ep-engine");
+  if (!sel.options.length) for (const [k, name] of VT_ENGINES) sel.append(new Option(name, k));
+  sel.value = ep.engine;
+  fillValveTiming();
+  $("engine-dialog").showModal();
+}
+
+function showProfileSummary() {
+  const key = ep.choice === "auto" ? ep.info.detected.key : ep.choice;
+  const p = ep.info.profiles.find((x) => x.key === key);
+  $("ep-summary").replaceChildren(...(p?.summary || []).map((t) => Object.assign(document.createElement("li"), { textContent: t })));
+}
+
+function fillValveTiming() {
+  const f = ep.figures[ep.engine] || {};
+  for (const k of VT_FIELDS) $(`vt-${k}`).value = f[k] ?? "";
+  $("ep-engine-sub").textContent = VT_ENGINES.find(([k]) => k === ep.engine)[2];
+  drawValvePreview();
+}
+
+function readValveTiming() {
+  const f = {};
+  for (const k of VT_FIELDS) { const v = $(`vt-${k}`).value.trim(); if (v !== "") f[k] = v; }
+  if (Object.keys(f).length) ep.figures[ep.engine] = f;
+  else delete ep.figures[ep.engine];
+}
+
+/** The 720° strip: firing TDC at 0; exhaust then intake windows, solid at rest, dashed at full AVCS travel. */
+function drawValvePreview() {
+  const num = (k) => { const v = parseFloat($(`vt-${k}`).value); return Number.isFinite(v) ? v : null; };
+  const ivo = num("ivo"), ivc = num("ivc"), evo = num("evo"), evc = num("evc"), ir = num("ir") || 0, er = num("er") || 0;
+  const complete = [ivo, ivc, evo, evc].every((v) => v != null);
+  const chip = $("ep-status");
+  chip.className = `ep-chip ${complete ? "ok" : "missing"}`;
+  chip.textContent = complete ? "Complete" : "Figures missing";
+  $("ep-strip").closest(".ep-preview").classList.toggle("empty", !complete);
+  if (!complete) { $("ep-durs").textContent = ""; return; }
+  const place = (el, a, b) => {
+    a = Math.max(0, a); b = Math.min(720, b);
+    el.style.left = `${a / 7.2}%`;
+    el.style.width = `${Math.max(0, b - a) / 7.2}%`;
+  };
+  const [exG, ex, inG, inn] = $("ep-strip").querySelectorAll(".win");
+  place(ex, 180 - evo, 360 + evc);
+  place(exG, 180 - evo + er, 360 + evc + er);
+  place(inn, 360 - ivo, 540 + ivc);
+  place(inG, 360 - ivo - ir, 540 + ivc - ir);
+  exG.hidden = !er;
+  inG.hidden = !ir;
+  const o0 = ivo + evc, o1 = ivo + ir + evc + er;
+  $("ep-durs").textContent = `intake ${(ivo + 180 + ivc).toFixed(0)}° · exhaust ${(evo + 180 + evc).toFixed(0)}° · overlap ` +
+    (o0 === o1 ? `${o0.toFixed(0)}°` : `${o0.toFixed(0)} to ${o1.toFixed(0)}°`);
+}
+
+function saveEngineDialog() {
+  readValveTiming();
+  try { localStorage.setItem(VT_KEY, JSON.stringify({ engine: ep.engine, figures: ep.figures })); } catch { /* private mode */ }
+  $("engine-dialog").close();
+  if (ep.choice !== profileChoice) {
+    const p = ep.info.profiles.find((x) => x.key === ep.choice);
+    chooseProfile(ep.choice, p ? p.name : "Automatic");
+  } else setStatus("Engine profile saved");
+  showProfileChoice(ep.info);
+}
+
+$("ep-engine").addEventListener("change", (e) => { readValveTiming(); ep.engine = e.target.value; fillValveTiming(); });
+for (const k of VT_FIELDS) $(`vt-${k}`).addEventListener("input", drawValvePreview);
+$("ep-save").addEventListener("click", saveEngineDialog);
+$("ep-cancel").addEventListener("click", () => $("engine-dialog").close());
+$("ep-x").addEventListener("click", () => $("engine-dialog").close());
 
 function chooseProfile(key, label) {
   profileChoice = key;

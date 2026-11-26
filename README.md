@@ -73,6 +73,9 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   naturally aspirated 2.0 L (FB20, FA20, EJ20) or turbo (EJ20/EJ25 turbo, FA20DIT, FA24DIT).
   *Automatic* picks turbo when the ECU reports a wastegate duty or the log shows boost, and NA
   2.5 L otherwise; choose 2.0 L by hand. The numbers live in `profiles.py`.
+  On the website, Tools ▸ Engine profile… is a dialog that shows what was detected and what each
+  profile changes, and also keeps your engine's valve timing figures (cam opening and closing points
+  and AVCS range, entered from the service manual) with a 720° preview, for the timing diagram.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
 
 ## Browser version

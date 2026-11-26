@@ -29,6 +29,34 @@ def set_profile(key: str) -> None:
     _profile = key if key == profiles.AUTO or key in profiles.BY_KEY else profiles.AUTO
 
 
+def _profile_summary(p) -> list[str]:
+    """What the profile changes in Analysis and the guided tests, in short lines."""
+    lines = [f"Warm from {p.warm_c:.0f} °C, still warming up below {p.cold_c:.0f} °C",
+             f"Warm idle airflow {p.idle_maf[0]:g}–{p.idle_maf[1]:g} g/s",
+             "Trim-by-airflow bands: idle below {:g}, light to {:g}, cruise to {:g} g/s, load above".format(*p.maf_bands)]
+    if p.turbo:
+        lines.append(f"Boost checks on: in boost above {p.boost_psi:g} psi, leaner than {p.max_boost_afr:g} AFR is flagged")
+    else:
+        lines.append("Boost checks off")
+    lines.append(f"Rear-sensor correction (A/F #3) judged against a resting value of {p.c3_rest:+.0f}%"
+                 if p.c3_rest is not None else "Rear-sensor correction (A/F #3) not judged: its resting value isn't known")
+    return lines
+
+
+def profile_info(t_bytes=None, y_bytes=None, names_json: str = "[]") -> str:
+    """The choices, what each changes, and what Automatic would pick for this log (and why)."""
+    series = {}
+    if t_bytes is not None and not _is_null(t_bytes):
+        _, series = _arrays(t_bytes, y_bytes, json.loads(names_json))
+    det, why = profiles.detect(series)
+    return json.dumps({
+        "choice": _profile,
+        "profiles": [{"key": p.key, "name": p.name, "engines": p.engines, "summary": _profile_summary(p)}
+                     for p in profiles.PROFILES],
+        "detected": {"key": det.key, "name": det.name, "why": why if series else "no data yet"},
+    })
+
+
 def _clean(v):
     return None if isinstance(v, float) and not math.isfinite(v) else v
 
