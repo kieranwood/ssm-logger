@@ -112,6 +112,11 @@
   <div id="chart-col">
   <div id="chart-bar" class="chart-bar">
     <h2><span id="chart-range-title">In view</span> <span id="chart-range" class="num"></span></h2>
+    <span class="c-layout-group">
+      <label class="field-label c-layout">Layout <select id="c-layout" class="field" title="Saved chart layouts"></select></label>
+      <button id="c-layout-save" class="btn" title="Save the charted channels, their order and Stacked/Overlay">Save layout…</button>
+      <button id="c-layout-del" class="btn danger-text" title="Delete the selected layout" hidden>Delete</button>
+    </span>
     <div id="chart-layout" class="seg-group" role="group" aria-label="Chart layout">
       <button class="seg" type="button" data-layout="stacked" aria-pressed="true" title="One chart per channel">Stacked</button>
       <button class="seg" type="button" data-layout="overlay" aria-pressed="false" title="All channels on one chart, each scaled to fit">Overlay</button>

@@ -14,6 +14,7 @@ const PY_BASES = ["py/", "../"];
 const VERSION = new URL(document.currentScript.src).searchParams.get("v") || "dev";
 
 // Same defaults and colours as the desktop logger (logger.py).
+const DEFAULT_LAYOUT = "__default";     // the built-in gauge or chart layout
 const DEFAULT_CHANNELS = [
   "Total Fuel Trim", "Air/Fuel Correction #1", "Air/Fuel Learning #1",
   "Air/Fuel Sensor #1 AFR", "Rear O2 Sensor", "Air/Fuel Correction #3",
@@ -154,8 +155,16 @@ function showRecording(rec) {
 
   const byName = new Map(rec.channels.map((c, i) => [c.name, i]));
   colorOf.clear();
-  state.selected = DEFAULT_CHANNELS.filter((n) => byName.has(n)).map((n) => byName.get(n));
-  if (!state.selected.length) state.selected = rec.channels.slice(0, 6).map((_, i) => i);
+  state.selected = defaultChartSelection(rec);
+  const remembered = chartLayouts()[cl.name];
+  if (remembered) {
+    const sel = remembered.channels.filter((n) => byName.has(n)).map((n) => byName.get(n));
+    if (sel.length) {
+      state.selected = sel;
+      state.chartLayout = remembered.mode === "overlay" ? "overlay" : "stacked";
+    } else cl.name = DEFAULT_LAYOUT;      // none of its channels are in this log: show the defaults
+  } else cl.name = DEFAULT_LAYOUT;
+  refreshChartLayoutSelect();
 
   state.selected.forEach(colorFor);
   buildChannelList();
@@ -345,6 +354,7 @@ function toggleChannel(i) {
   }
   if (overlay) rebuildCharts();
   refreshChannelList();
+  chartsChanged();
 }
 
 // ---- drag a chart's grip (⠿) onto another chart to move it above (top half) or below (bottom half)
@@ -390,6 +400,7 @@ function moveChart(i, target, after) {
   state.selected.splice(state.selected.indexOf(target) + (after ? 1 : 0), 0, i);
   const t = state.charts.get(target).el;
   $("charts").insertBefore(state.charts.get(i).el, after ? t.nextSibling : t);
+  chartsChanged();
 }
 
 function updateValues() {
@@ -842,9 +853,124 @@ $("overview-canvas").addEventListener("pointerup", (e) => {
 new ResizeObserver(() => requestAnimationFrame(drawOverview)).observe($("overview-canvas"));
 
 for (const b of document.querySelectorAll("#chart-layout .seg")) {
-  b.addEventListener("click", () => setChartLayout(b.dataset.layout));
+  b.addEventListener("click", () => {
+    if (b.dataset.layout === state.chartLayout) return;
+    setChartLayout(b.dataset.layout);
+    chartsChanged();
+  });
 }
 try { state.chartLayout = localStorage.getItem("ssm-logger.chartLayout") === "overlay" ? "overlay" : "stacked"; } catch { /* private mode */ }
+
+// ---------------------------------------------------------------- saved chart layouts
+// Like the gauge layouts: the charted channels (by name, in order) and Stacked/Overlay. The layout
+// picked last is remembered and used for the next recording or live session.
+
+const CHART_LAYOUTS_KEY = "ssm-logger.chartLayouts", CHART_LAYOUT_NAME_KEY = "ssm-logger.chartLayoutName";
+const cl = { name: DEFAULT_LAYOUT };     // the layout in use, DEFAULT_LAYOUT, or "" (changed since)
+try { cl.name = localStorage.getItem(CHART_LAYOUT_NAME_KEY) ?? DEFAULT_LAYOUT; } catch { /* private mode */ }
+
+function chartLayouts() {
+  try { return JSON.parse(localStorage.getItem(CHART_LAYOUTS_KEY) || "{}"); } catch { return {}; }
+}
+
+function storeChartLayouts(layouts) {
+  try {
+    if (layouts) localStorage.setItem(CHART_LAYOUTS_KEY, JSON.stringify(layouts));
+    localStorage.setItem(CHART_LAYOUT_NAME_KEY, cl.name);
+  } catch { /* private mode */ }
+  refreshChartLayoutSelect();
+}
+
+function defaultChartSelection(rec) {
+  const byName = new Map(rec.channels.map((c, i) => [c.name, i]));
+  const sel = DEFAULT_CHANNELS.filter((n) => byName.has(n)).map((n) => byName.get(n));
+  return sel.length ? sel : rec.channels.slice(0, 6).map((_, i) => i);
+}
+
+function refreshChartLayoutSelect() {
+  const sel = $("c-layout");
+  const names = Object.keys(chartLayouts()).sort((a, b) => a.localeCompare(b));
+  sel.replaceChildren();
+  if (cl.name === "") sel.append(new Option("Custom (unsaved)", ""));
+  sel.append(new Option("Default", DEFAULT_LAYOUT));
+  for (const n of names) sel.append(new Option(n, n));
+  sel.value = cl.name;
+  $("c-layout-del").hidden = !names.includes(cl.name);
+}
+
+/** The user changed the charts by hand: no saved layout matches any more. */
+function chartsChanged() {
+  if (cl.name === "") return;
+  cl.name = "";
+  storeChartLayouts();
+}
+
+function applyChartLayout(name) {
+  const rec = state.rec;
+  let sel, mode;
+  if (name === DEFAULT_LAYOUT) {
+    sel = defaultChartSelection(rec);
+    mode = "stacked";
+  } else {
+    const L = chartLayouts()[name];
+    if (!L) return;
+    const byName = new Map(rec.channels.map((c, i) => [c.name, i]));
+    sel = L.channels.filter((n) => byName.has(n)).map((n) => byName.get(n));
+    if (!sel.length) {
+      setStatus(`None of the channels in the layout “${name}” are in this log.`, true);
+      refreshChartLayoutSelect();
+      return;
+    }
+    const missing = L.channels.length - sel.length;
+    if (missing) setStatus(`Layout “${name}”: ${missing} of its channels aren't in this log.`);
+    mode = L.mode === "overlay" ? "overlay" : "stacked";
+  }
+  if (state.maxChart != null) maximiseChart(null);
+  state.selected = sel;
+  cl.name = name;
+  storeChartLayouts();
+  setChartLayout(mode);           // rebuilds the charts
+  refreshChannelList();
+}
+
+function openChartLayoutDialog(mode) {
+  const save = mode === "save";
+  $("layout-title").textContent = save ? "Save chart layout" : "Delete chart layout";
+  $("layout-name-row").hidden = !save;
+  $("layout-ok").textContent = save ? "Save" : "Delete";
+  $("layout-ok").className = save ? "btn primary" : "btn danger";
+  if (save) {
+    $("layout-name").value = cl.name && cl.name !== DEFAULT_LAYOUT ? cl.name : "";
+    describeLayoutName();
+  } else {
+    $("layout-msg").textContent = `Delete the chart layout “${cl.name}”? The charts on screen stay as they are.`;
+  }
+  $("layout-dialog").showModal();
+  if (save) $("layout-name").select();
+}
+
+function confirmChartLayout() {
+  const layouts = chartLayouts();
+  if (layoutAction === "save") {
+    const name = $("layout-name").value.trim();
+    if (!name || name.toLowerCase() === "default") return;
+    layouts[name] = { channels: state.selected.map((i) => state.rec.channels[i].name), mode: state.chartLayout };
+    cl.name = name;
+    storeChartLayouts(layouts);
+    setStatus(`Saved the chart layout “${name}”.`);
+  } else {
+    const name = cl.name;
+    delete layouts[name];
+    cl.name = "";
+    storeChartLayouts(layouts);
+    setStatus(`Deleted the chart layout “${name}”.`);
+  }
+  $("layout-dialog").close();
+}
+
+$("c-layout").addEventListener("change", (e) => { if (e.target.value) applyChartLayout(e.target.value); });
+$("c-layout-save").addEventListener("click", () => openLayoutDialog("save", "charts"));
+$("c-layout-del").addEventListener("click", () => openLayoutDialog("delete", "charts"));
 
 function setChartLayout(layout) {
   state.chartLayout = layout;
@@ -2151,7 +2277,6 @@ const gv = {
   defaultSel: [], layout: "",      // layout: a saved layout's name, DEFAULT_LAYOUT, or "" (changed since)
   sizeOf: {},                      // per-gauge sizes (Size: Per gauge), name -> key of TILE_SIZES
 };
-const DEFAULT_LAYOUT = "__default";
 // Per-gauge sizes, in cells of the "Per gauge" grid (50 x 45 px plus 10 px gaps): [columns, rows].
 const TILE_SIZES = { s: [3, 4, "S"], m: [4, 5, "M"], l: [6, 7, "L"], w: [6, 4, "Wide"] };
 const CELL_W = 50, CELL_GAP = 10;
@@ -2225,9 +2350,11 @@ function applyLayout(name) {
   refreshChannelList();
 }
 
-let layoutAction = null;
-function openLayoutDialog(mode) {
+let layoutAction = null, layoutKind = "gauges";
+function openLayoutDialog(mode, kind = "gauges") {
   layoutAction = mode;
+  layoutKind = kind;
+  if (kind === "charts") { openChartLayoutDialog(mode); return; }
   const save = mode === "save";
   $("layout-title").textContent = save ? "Save layout" : "Delete layout";
   $("layout-name-row").hidden = !save;
@@ -2247,13 +2374,16 @@ function openLayoutDialog(mode) {
 function describeLayoutName() {
   const name = $("layout-name").value.trim();
   const reserved = name.toLowerCase() === "default";
+  const charts = layoutKind === "charts";
   $("layout-ok").disabled = !name || reserved;
   $("layout-msg").textContent = reserved ? "“Default” is the built-in layout; pick another name."
-    : name in savedLayouts() ? `Replaces the saved layout “${name}”.`
+    : name in (charts ? chartLayouts() : savedLayouts()) ? `Replaces the saved layout “${name}”.`
+    : charts ? "Saves the charted channels, their order and Stacked/Overlay, to use with any recording or live session."
     : "Saves the gauges shown, their styles and sizes, to use with any recording or live session.";
 }
 
 function confirmLayout() {
+  if (layoutKind === "charts") { confirmChartLayout(); return; }
   const layouts = savedLayouts();
   if (layoutAction === "save") {
     const name = $("layout-name").value.trim();
