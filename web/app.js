@@ -2288,6 +2288,16 @@ function openFile(file) {
   file.text().then((text) => openText(file.name, text));
 }
 
+/** Open dropped or picked files: a probe.py CAN capture (and its _ssm.csv) goes to the CAN window,
+ *  anything else is opened as a recording. */
+async function openFiles(files) {
+  const list = [...files];
+  if (!list.length) return;
+  const heads = await Promise.all(list.map((f) => f.slice(0, 200).text()));
+  if (heads.some((h) => /^time_s,device_us,id,len,data/m.test(h))) CanBus.openCapture(list);
+  else openFile(list[0]);
+}
+
 function openUrl(url) {
   setStatus("Downloading…");
   return fetch(url)
@@ -2297,9 +2307,10 @@ function openUrl(url) {
 }
 
 $("file").addEventListener("change", (e) => {
-  openFile(e.target.files[0]);
+  openFiles(e.target.files);
   e.target.value = "";
 });
+$("can-empty").addEventListener("click", () => CanBus.open());
 $("analyse").addEventListener("click", analyseNow);
 $("close-findings").addEventListener("click", () => {
   $("findings").hidden = true;
@@ -3528,7 +3539,7 @@ window.addEventListener("drop", (e) => {
   e.preventDefault();
   dragDepth = 0;
   $("drop").hidden = true;
-  openFile(e.dataTransfer.files[0]);
+  openFiles(e.dataTransfer.files);
 });
 
 // Web Serial only exists in Chrome/Edge on desktop; explain instead of hiding the button.

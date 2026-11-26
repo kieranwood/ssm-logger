@@ -152,6 +152,7 @@ const CanBus = (() => {
   // ---------------------------------------------------------------- window
   function open() {
     $("tools-menu").hidden = true;
+    if ($("can-dialog").open) return;
     if (!st.source && state.session && state.rec?.live) startListening();
     $("can-dialog").showModal();
     draw(true);
@@ -827,5 +828,11 @@ const CanBus = (() => {
   $("can-save").addEventListener("click", saveCapture);
   $("can-file").addEventListener("change", (e) => { openFiles(e.target.files); e.target.value = ""; });
 
-  return { open, value, parseDbc, dbcText, _st: st };
+  /** Open the window on a capture (from the start page, or files dropped on the app). */
+  function openCapture(files) {
+    open();
+    openFiles(files);
+  }
+
+  return { open, openCapture, value, parseDbc, dbcText, _st: st };
 })();

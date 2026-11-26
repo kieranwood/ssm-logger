@@ -29,7 +29,7 @@
     </div>
     <nav class="idle-only" aria-label="Open">
       <label class="btn primary" for="file"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><path d="M14 3v6h6"></path><path d="M12 18v-6M9 15l3-3 3 3"></path></svg>Open recording…</label>
-      <input id="file" type="file" accept=".csv,text/csv" hidden>
+      <input id="file" type="file" accept=".csv,text/csv" multiple hidden>
       <button id="connect" class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6M15 2v6"></path><path d="M6 8h12v4a6 6 0 0 1-12 0z"></path><path d="M12 18v4"></path></svg>Connect to car</button>
       <button id="demo" class="btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M10 8.5v7l6-3.5z"></path></svg>Live demo</button>
     </nav>
@@ -173,6 +173,7 @@
           </div>
         </section>
       </div>
+      <button id="can-empty" class="btn link-btn start-can"><span class="card-icon cyan"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10h18M3 14h18"></path><path d="M7 10V5M12 10V6M17 10V4M9 14v5M15 14v4"></path></svg></span><span class="grow"><b>Open a CAN bus capture</b><small>Traffic recorded with <code>probe.py --listen</code>: watch the bus, find signals, export a DBC. Drop the capture and its _ssm.csv here too.</small></span><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg></button>
       <div class="privacy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="18" height="18"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg><span>Everything runs in your browser. Nothing is uploaded.</span></div>
     </div>
   </section>
