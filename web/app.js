@@ -2978,12 +2978,11 @@ function timingInputs() {
 function openTiming() {
   $("tools-menu").hidden = true;
   if (!timingMounted) {
-    EngineTiming.mount($("td-rows"), $("td-wheel"));
+    EngineTiming.mount($("td-rows"), $("td-wheel"), (a) => { $("td-angle").textContent = `${Math.round(a)}°`; });
     timingMounted = true;
   }
   $("timing-dialog").showModal();
   refreshTiming();
-  if (!REDUCED_MOTION.matches && !EngineTiming.isPlaying()) $("td-play").click();
 }
 
 function refreshTiming() {
@@ -3043,18 +3042,7 @@ for (const b of document.querySelectorAll("#td-view .seg")) {
     for (const o of document.querySelectorAll("#td-view .seg")) o.setAttribute("aria-pressed", String(o === b));
   });
 }
-$("td-play").addEventListener("click", () => {
-  const on = !EngineTiming.isPlaying();
-  EngineTiming.setPlaying(on);
-  $("td-play").textContent = on ? "Pause" : "Play";
-  $("td-play").setAttribute("aria-pressed", String(on));
-});
 $("td-x").addEventListener("click", () => $("timing-dialog").close());
-$("timing-dialog").addEventListener("close", () => {
-  EngineTiming.setPlaying(false);
-  $("td-play").textContent = "Play";
-  $("td-play").setAttribute("aria-pressed", "false");
-});
 $("td-edit-profile").addEventListener("click", () => { $("timing-dialog").close(); openEngineDialog(); });
 
 // ------------------------------------------------------------------ boxer engine animation (boxer.js)

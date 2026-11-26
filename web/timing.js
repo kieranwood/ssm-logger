@@ -8,7 +8,6 @@
 const EngineTiming = (() => {
   const ORDER = [1, 3, 2, 4];
   const STROKES = [["Power", 0, 180], ["Exhaust", 180, 360], ["Intake", 360, 540], ["Compression", 540, 720]];
-  const SWEEP_S = 2.4;                                  // seconds per animated cycle (slowed right down)
   const norm = (a) => ((a % 720) + 720) % 720;
   /** [a, b] shifted by off and wrapped into 0-720: one or two pieces. */
   function segs(a, b, off) {
@@ -18,7 +17,7 @@ const EngineTiming = (() => {
   }
   const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 
-  const st = { root: null, view: "rows", playing: false, ang: 0, last: 0, raf: 0, geo: null, rows: [], wheel: null };
+  const st = { ang: 0, geo: null, rows: [], wheel: null, onAngle: null };
 
   // ---------------------------------------------------------------- geometry
   /** inputs: {rpm, adv, pw, icam, ecam}; base: {ivo, ivc, ir, evo, evc, er}. Crank degrees, 0-720. */
@@ -183,28 +182,65 @@ const EngineTiming = (() => {
     if (st.wheel) st.wheel.crank.setAttribute("transform", `rotate(${(a / 2).toFixed(1)} 300 300)`);
   }
 
-  function frame(now) {
-    if (!st.playing) return;
-    const dt = Math.min(0.1, (now - (st.last || now)) / 1000);
-    st.last = now;
-    st.ang = norm(st.ang + (720 / SWEEP_S) * dt);
+  function setAngle(a) {
+    st.ang = norm(a);
     placeCrank();
-    st.raf = requestAnimationFrame(frame);
+    st.onAngle?.(st.ang);
   }
 
-  function setPlaying(on) {
-    st.playing = on;
-    cancelAnimationFrame(st.raf);
-    st.last = 0;
-    if (on) st.raf = requestAnimationFrame(frame);
+  /** Click to place the crank line, hold and drag to move it. angleAt(event) -> crank degrees or null. */
+  function draggable(target, angleAt) {
+    target.classList.add("td-scrub");
+    target.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const a = angleAt(e, false);
+      if (a == null) return;
+      e.preventDefault();
+      target.setPointerCapture(e.pointerId);
+      setAngle(a);
+      const move = (ev) => { const b = angleAt(ev, true); if (b != null) setAngle(b); };
+      const up = () => { target.removeEventListener("pointermove", move); target.removeEventListener("pointerup", up); target.removeEventListener("pointercancel", up); };
+      target.addEventListener("pointermove", move);
+      target.addEventListener("pointerup", up);
+      target.addEventListener("pointercancel", up);
+    });
+    // keyboard: arrow keys step 5° (shift: 45°)
+    target.tabIndex = 0;
+    target.addEventListener("keydown", (e) => {
+      const step = e.shiftKey ? 45 : 5;
+      if (e.key === "ArrowRight" || e.key === "ArrowUp") setAngle(st.ang + step);
+      else if (e.key === "ArrowLeft" || e.key === "ArrowDown") setAngle(st.ang - step);
+      else return;
+      e.preventDefault();
+    });
   }
 
   // ---------------------------------------------------------------- public
-  /** Build into the row and wheel containers (once). */
-  function mount(rowsBox, wheelBox) {
+  /** Build into the row and wheel containers (once). onAngle(a) when the crank line moves. */
+  function mount(rowsBox, wheelBox, onAngle) {
+    st.onAngle = onAngle;
     buildRows(rowsBox);
     buildWheel(wheelBox);
-    placeCrank();
+    // rows: x across a lane is 0-720°
+    const lanes = rowsBox.querySelector(".td-lanes") || rowsBox;
+    draggable(lanes, (e, dragging) => {
+      const lane = rowsBox.querySelector(".td-lane");
+      const r = lane.getBoundingClientRect();
+      if (!r.width) return null;
+      if (!dragging && (e.clientX < r.left - 8 || e.clientX > r.right + 8)) return null;   // the cylinder names
+      return Math.max(0, Math.min(719.9, ((e.clientX - r.left) / r.width) * 720));
+    });
+    lanes.setAttribute("aria-label", "Crank position: click or drag across the cylinder rows, or use the arrow keys");
+    // wheel: the angle round from the top, clockwise, is half the crank angle
+    const svg = st.wheel.svg;
+    draggable(svg, (e) => {
+      const m = svg.getScreenCTM();
+      if (!m) return null;
+      const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+      const deg = (Math.atan2(p.y - CY, p.x - CX) * 180) / Math.PI + 90;
+      return norm(2 * deg);
+    });
+    setAngle(0);
   }
 
   /** Redraw for new inputs and base valve timing. */
@@ -216,5 +252,5 @@ const EngineTiming = (() => {
     return g;
   }
 
-  return { mount, draw, setPlaying, isPlaying: () => st.playing, STROKES, geometry, norm };
+  return { mount, draw, setAngle, STROKES, geometry, norm };
 })();

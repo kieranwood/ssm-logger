@@ -428,14 +428,13 @@
       <button class="seg" type="button" data-view="wheel" aria-pressed="false">Wheel</button>
     </div>
     <button id="td-boxer" class="btn">Engine animation</button>
-    <button id="td-play" class="btn" aria-pressed="false">Play</button>
     <button id="td-x" class="btn icon-btn ghost" aria-label="Close engine timing"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
   </header>
   <div class="td-body">
     <section class="td-diagram" aria-label="Timing diagram">
       <div class="td-legend">
         <span><i class="k int"></i>Intake valve open</span><span><i class="k exh"></i>Exhaust valve open</span>
-        <span><i class="k inj"></i>Injection</span><span><i class="k spark"></i>Spark</span><span><i class="k crank"></i>Crank position (slowed)</span>
+        <span><i class="k inj"></i>Injection</span><span><i class="k spark"></i>Spark</span><span><i class="k crank"></i>Crank position <b id="td-angle" class="num">0°</b> · click or drag to move it</span>
         <span id="td-ghost-key" hidden><i class="k ghost"></i>Dashed: how far the AVCS can move it</span>
       </div>
       <div id="td-rows" class="td-rows"></div>

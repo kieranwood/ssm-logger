@@ -1111,6 +1111,11 @@ dialog.td[open] { display: flex; flex-direction: column; }
 .td-bar.int.ghost { border-color: var(--t-int); }
 .td-spark { position: absolute; top: 6px; bottom: 6px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--t-spark);
   box-shadow: 0 0 8px var(--t-spark); }
+.td-scrub { touch-action: none; }
+.td-scrub:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 10px; }
+.td-rows .td-lane { cursor: ew-resize; }
+.td-wheel { cursor: crosshair; }
+#td-angle { font-weight: 500; color: var(--text); }
 .td-crank { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--t-crank); opacity: 0.85; }
 .td-foot { margin: 0 0 0 116px; font-size: 12px; color: var(--muted); }
 .td-foot.td-center { margin: 0; text-align: center; }
