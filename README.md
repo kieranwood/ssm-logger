@@ -91,6 +91,10 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   with a note on each saying how it was confirmed, and notes on the messages that are still only candidates.
   To carry on: open a capture in the CAN window, Signals ▸ Import DBC… that file, find more in the signal
   finder, then Export DBC ▸ Save file and save it back over `can/forester-2012.dbc`.
+  The **Decoded** view shows those signals as what they mean: named states as the current one
+  highlighted (the gear as P / D), one-bit signals as lamps, numbers with their range, each over a timeline
+  of the capture that you can drag along or play back. Name values… gives a signal's values names
+  (exported as `VAL_` lines), and the monitor's labels show the decoded values too.
 - **Engine animation** (website, Tools ▸ Engine animation…): a schematic of the boxer engine from above,
   pistons, valves, cams, spark and injection moving through the 1-3-2-4 cycle on the same calculated
   timing, slowed right down, with a crank-angle scrubber. Misfire counts come from the ECU's roughness

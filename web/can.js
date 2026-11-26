@@ -1,8 +1,8 @@
 // CAN bus: the raw traffic between the car's modules, read listen-only from the OBD port - live
 // (alongside the logging, if the adapter allows a second channel) or from a capture made with
-// `probe.py --listen` (its CSV, and the _ssm.csv beside it). Four views: a monitor of every message,
+// `probe.py --listen` (its CSV, and the _ssm.csv beside it). Five views: a monitor of every message,
 // a signal finder that compares picked bits with a logged channel, a map of which module sends what,
-// and the signals found so far, exported as a DBC file. Nothing here transmits on the bus.
+// the signals found so far (exported as a DBC file), and those signals decoded: gear letters, lamps, values. Nothing here transmits on the bus.
 "use strict";
 
 const CanBus = (() => {
@@ -65,6 +65,8 @@ const CanBus = (() => {
     st.loadHist = [];
     st.best = null;
     st.bestKey = "";
+    dash.t = null;
+    dash.playing = false;
   }
 
   const sorted = () => [...st.msgs.values()].sort((a, b) => a.id - b.id);
@@ -167,7 +169,14 @@ const CanBus = (() => {
       // the monitor refreshes 5 times a second; the other views once a second, and not while a field
       // or menu in them is in use (a redraw would wipe what's being typed)
       const busy = $("can-body").contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
-      const every = st.view === "monitor" ? 200 : 1000;
+      if (st.view === "decoded" && dash.playing) {
+        const [a, b] = dash.range;
+        dash.t = Math.min(b, cursorT() + ((now - dash.lastT) / 1000) * dash.speed);
+        if (dash.t >= b) dash.playing = false;
+        updateDecoded();
+      }
+      dash.lastT = now;
+      const every = st.view === "monitor" || (st.view === "decoded" && st.source === "live") ? 200 : 1000;
       if (!st.paused && !busy && now - st.lastDraw > every) draw();
       st.raf = requestAnimationFrame(tick);
     };
@@ -257,15 +266,16 @@ const CanBus = (() => {
     for (const m of st.msgs.values()) fps += rateOf(m, now);
     const ld = loadOf(fps);
     if (st.source === "live" && !st.paused && Number.isFinite(now)) { st.loadHist.push(ld); if (st.loadHist.length > 120) st.loadHist.shift(); }
-    const titles = { monitor: "CAN bus", finder: "Signal finder", network: "CAN network", signals: "CAN signals" };
+    const titles = { monitor: "CAN bus", finder: "Signal finder", network: "CAN network", signals: "CAN signals", decoded: "Decoded signals" };
     const leads = {
       monitor: "Every message on the bus. Bytes light up as they change, so moving values stand out from static ones. Pick a message to work out what it carries in the signal finder.",
       finder: "Pick bits out of a message and compare them with a channel the app logs. When the shapes match, you've found the signal and its scaling.",
       network: "The modules on the bus and the messages each one sends. CAN frames don't say who sent them, so senders are worked out, not read: assign each message to the module you think sends it.",
+      decoded: "Your identified signals shown as what they mean: named states such as the gear, switches as lamps, and numbers with their range. Drag along any timeline to see that moment of the capture.",
       signals: "Every signal you've identified. Export them as a DBC file, the standard format other CAN tools read, or import one to label your bus.",
     };
     $("can-title").textContent = titles[st.view];
-    $("can-lead").textContent = leads[st.view];
+    $("can-lead").textContent = st.view === "decoded" && st.source === "live" ? leads.decoded.replace(/ Drag along.*$/, " Values update as they arrive.") : leads[st.view];
     $("can-bus-pill").hidden = !st.msgs.size;
     $("can-bus-pill").textContent = `500 kbit/s · ~${ld.toFixed(0)}% load · ${Math.round(fps)} frames/s`;
     $("can-src-pill").hidden = !st.source;
@@ -288,6 +298,7 @@ const CanBus = (() => {
     if (st.view === "monitor") drawMonitor(body, now, full);
     else if (st.view === "finder") drawFinder(body, now, full);
     else if (st.view === "network") drawNetwork(body, now, full);
+    else if (st.view === "decoded") drawDecoded(body, now, full);
     else drawSignals(body, now, full);
   }
 
@@ -333,7 +344,7 @@ const CanBus = (() => {
         const row = el("button", "can-row");
         row.type = "button";
         const labs = labelsFor(m.id), node = nodeOf(m.id), note = st.messages[hx(m.id, 0)]?.note;
-        const label = labs.length ? labs.join(", ") : note ? note : node ? moduleName(node.node) : "Unknown";
+        const label = labs.length ? st.signals.filter((g) => g.id === m.id && !HOUSE.test(g.name)).map((g) => `${g.name} ${decodedShort(g)}`).join(" · ") || labs.join(", ") : note ? note : node ? moduleName(node.node) : "Unknown";
         row.innerHTML = `<span class="num id"></span><span class="lab${labs.length ? "" : " dim"}"></span><span class="num">${d.length}</span>` +
           `<span class="num">${Math.round(rateOf(m, now))} Hz</span><span class="bytes"></span>` +
           `<span class="act"><span class="bar"><i style="width:${(m.changed.size / 8) * 100}%"></i></span><span class="num">${m.changed.size}/8</span></span>`;
@@ -759,6 +770,12 @@ const CanBus = (() => {
     return out;
   }
 
+  /** The value alone, for the monitor: the state's name if it has one. */
+  function decodedShort(g) {
+    const x = decoded(g);
+    return x.includes(" · ") ? x.split(" · ")[1] : g.len === 1 ? (x.startsWith("1") ? "on" : "off") : x;
+  }
+
   function decoded(g) {
     const m = st.msgs.get(g.id);
     const d = m?.d[m.d.length - 1];
@@ -768,7 +785,295 @@ const CanBus = (() => {
     if (g.signed && v >= 2 ** (g.len - 1)) v -= 2 ** g.len;
     const x = v * g.f + g.o;
     if (g.vals && g.vals[String(v)] != null) return `${v} · ${g.vals[String(v)]}`;
-    return `${Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(2)} ${g.u || ""}`.trim();
+    return `${fmtNum(x)} ${g.u || ""}`.trim();
+  }
+
+  // ---- decoded: identified signals shown as what they mean
+  const HOUSE = /^(counter|checksum|crc|alive)/i;
+  const SHOW = [["auto", "Automatic"], ["state", "Named states"], ["lamp", "On / off"], ["number", "Number"], ["hide", "Hidden"]];
+  const ORDER = ["P", "R", "N", "D", "S", "L", "M", "1", "2", "3", "4", "5", "6", "7", "8"];
+  const dash = { t: null, playing: false, speed: 1, more: false, key: "", tiles: [], range: [0, 1], lastT: 0 };
+  function kindOf(g) {
+    if (g.disp && g.disp !== "auto") return g.disp;
+    if (HOUSE.test(g.name)) return "house";
+    if (g.vals && Object.keys(g.vals).length) return "state";
+    return g.len === 1 ? "lamp" : "number";
+  }
+  const phys = (g, v) => v * g.f + g.o;
+  const fmtNum = (x) => (Number.isInteger(x) ? String(x) : Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 10 ? x.toFixed(1) : x.toFixed(2));
+  const rank = (name) => { const i = ORDER.indexOf(String(name).trim().toUpperCase()); return i < 0 ? 100 : i; };
+  /** Named states in display order: gear letters as P R N D, the rest by value. */
+  const statesOf = (g) => Object.entries(g.vals || {}).map(([v, n]) => [Number(v), n]).sort((a, b) => rank(a[1]) - rank(b[1]) || a[0] - b[0]);
+
+  /** The signal through the capture as change points (t, raw value), plus its range and the values seen. */
+  const seriesCache = new WeakMap();
+  function series(g) {
+    const m = st.msgs.get(g.id);
+    if (!m || !m.t.length) return null;
+    const key = `${m.t.length}|${m.t[0]}|${m.t[m.t.length - 1]}|${g.st}|${g.len}|${g.e}|${g.signed}`;
+    const c0 = seriesCache.get(g);
+    if (c0 && c0.key === key) return c0;
+    const t = [], v = [], seen = new Map();
+    let lo = Infinity, hi = -Infinity, prev;
+    for (let i = 0; i < m.t.length; i++) {
+      let x = value(m.d[i], g.st, g.len, g.e);
+      if (x === null) continue;
+      if (g.signed && x >= 2 ** (g.len - 1)) x -= 2 ** g.len;
+      if (x < lo) lo = x;
+      if (x > hi) hi = x;
+      if (seen.has(x) || seen.size <= 64) seen.set(x, (seen.get(x) || 0) + 1);
+      if (x !== prev) { t.push(m.t[i]); v.push(x); prev = x; }
+    }
+    const c = { key, t, v, lo, hi, seen, frames: m.t.length };
+    seriesCache.set(g, c);
+    return c;
+  }
+  const rawAt = (c, t) => { const i = bsearch(c.t, t); return i < 0 ? null : c.v[i]; };
+
+  function drawDecoded(body, now, full) {
+    const t0 = Math.min(...[...st.msgs.values()].map((m) => m.t[0]));
+    const t1 = now;
+    const key = JSON.stringify([dash.more, st.signals.map((g) => [g.name, g.id, g.st, g.len, g.e, g.f, g.o, g.u, g.disp, g.vals])]);
+    if (full || key !== dash.key || !body.querySelector(".can-dec")) buildDecoded(body, key, t0, t1);
+    else if (st.source === "live") { dash.range = [Math.max(t0, t1 - KEEP_S), t1]; for (const tile of dash.tiles) tile.track(); }
+    updateDecoded();
+  }
+
+  function cursorT() {
+    const [a, b] = dash.range;
+    if (st.source === "live" || dash.t == null) return b;
+    return Math.min(b, Math.max(a, dash.t));
+  }
+
+  function buildDecoded(body, key, t0, t1) {
+    dash.key = key;
+    dash.range = st.source === "live" ? [Math.max(t0, t1 - KEEP_S), t1] : [t0, t1];
+    body.replaceChildren();
+    const wrap = el("div", "can-dec");
+    const bar = el("div", "can-decbar");
+    if (st.source === "file") {
+      const play = text("button", "btn small", dash.playing ? "Pause" : "Play");
+      play.type = "button";
+      play.id = "can-dec-play";
+      play.addEventListener("click", () => {
+        if (!dash.playing && cursorT() >= dash.range[1] - 0.05) dash.t = dash.range[0];
+        dash.playing = !dash.playing;
+        dash.lastT = performance.now();
+        play.textContent = dash.playing ? "Pause" : "Play";
+      });
+      const speed = el("select", "field small");
+      speed.setAttribute("aria-label", "Playback speed");
+      for (const x of [0.25, 0.5, 1, 2, 4]) { const o = text("option", "", `${x}×`); o.value = x; o.selected = x === dash.speed; speed.append(o); }
+      speed.addEventListener("change", () => { dash.speed = Number(speed.value); speed.blur(); });
+      const range = el("input", "can-scrub");
+      range.type = "range";
+      range.id = "can-dec-range";
+      range.min = 0;
+      range.max = 1000;
+      range.setAttribute("aria-label", "Moment in the capture");
+      range.addEventListener("input", () => { dash.t = dash.range[0] + (range.value / 1000) * (dash.range[1] - dash.range[0]); updateDecoded(); });
+      bar.append(play, speed, range, text("span", "num can-count can-dec-time", ""));
+    } else {
+      bar.append(text("span", "can-note", `Live: values as they arrive, with the last ${KEEP_S / 60} minutes behind them.`), el("span", "spacer"));
+    }
+    const more = el("label", "can-chk");
+    const cb = el("input");
+    cb.type = "checkbox";
+    cb.checked = dash.more;
+    cb.addEventListener("change", () => { dash.more = cb.checked; draw(true); });
+    more.append(cb, document.createTextNode(" Show counters, checksums and hidden signals"));
+    bar.append(more);
+    wrap.append(bar);
+
+    dash.tiles = [];
+    const groups = [["state", "States"], ["lamp", "Switches"], ["number", "Values"], ["house", "Counters and checksums"], ["hide", "Hidden"]];
+    const sigs = st.signals.filter((g) => st.msgs.has(g.id));
+    for (const [k, title] of groups) {
+      if (!dash.more && (k === "house" || k === "hide")) continue;
+      const gs = sigs.filter((g) => kindOf(g) === k);
+      if (!gs.length) continue;
+      wrap.append(text("div", "can-lbl can-dec-grp", title));
+      const grid = el("div", "can-dec-grid");
+      for (const g of gs) grid.append(tile(g, k === "house" || k === "hide" ? "number" : k));
+      wrap.append(grid);
+    }
+    const missing = st.signals.filter((g) => !st.msgs.has(g.id)).length;
+    if (!st.signals.length) {
+      wrap.append(text("p", "can-note pad", "No signals yet. Find one in the signal finder and choose Save signal, or import a DBC file under Signals."));
+    } else if (!dash.tiles.length) {
+      wrap.append(text("p", "can-note pad", "None of your signals' messages are in this traffic."));
+    }
+    if (missing) wrap.append(text("p", "can-note", `${missing} signal${missing === 1 ? "" : "s"} not shown: ${missing === 1 ? "its message isn't" : "their messages aren't"} in this traffic.`));
+    body.append(wrap);
+  }
+
+  /** One signal's tile: what it reads at the cursor, and a timeline of the capture that you can drag along. */
+  function tile(g, kind) {
+    const box = el("section", `can-panel can-dtile k-${kind}`);
+    const head = el("div", "dt-head");
+    const nm = el("div", "dt-name");
+    nm.append(text("h3", "num", g.name), text("small", "num", `${idTxt(g.id)} · byte ${g.st >> 3}.${g.e === "be" ? 7 - (g.st & 7) : g.st & 7} · ${g.len} bit${g.len === 1 ? "" : "s"}`));
+    const show = el("select", "field small");
+    show.setAttribute("aria-label", `Show ${g.name} as`);
+    for (const [v, label] of SHOW) { const o = text("option", "", label); o.value = v; o.selected = (g.disp || "auto") === v; show.append(o); }
+    show.addEventListener("change", () => { g.disp = show.value === "auto" ? undefined : show.value; store(SIG_KEY, st.signals); show.blur(); draw(true); });
+    head.append(nm, show);
+    const nowEl = el("div", "dt-now");
+    const track = el("div", "dt-track");
+    const band = el("div", "dt-band");
+    const cur = el("i", "dt-cur");
+    track.append(band, cur);
+    const foot = el("div", "dt-foot");
+    if (g.note) foot.append(text("p", "dt-note", g.note));
+    box.append(head, nowEl, track, foot);
+
+    const states = statesOf(g);
+    const color = (v) => { const i = states.findIndex(([x]) => x === v); return i < 0 ? "c-x" : `c${i % 6}`; };
+    let chips = null, big = null, sub = null, fill = null;
+    if (kind === "state") {
+      chips = el("div", "dt-chips");
+      big = text("div", "dt-big", "—");
+      nowEl.append(big, chips);
+    } else if (kind === "lamp") {
+      big = text("div", "dt-big dt-lamp", "—");
+      nowEl.append(big);
+    } else {
+      big = text("div", "dt-big num", "—");
+      const meter = el("div", "dt-meter");
+      fill = el("i");
+      meter.append(fill);
+      sub = text("div", "dt-range num", "");
+      nowEl.append(big, meter, sub);
+    }
+
+    const c = () => series(g);
+    function renderTrack() {
+      const s = c();
+      const [a, b] = dash.range, span = b - a || 1;
+      const X = (t) => ((Math.max(a, Math.min(b, t)) - a) / span) * 100;
+      band.replaceChildren();
+      if (!s) return;
+      if (kind === "number") {
+        const lo = phys(g, s.lo), hi = phys(g, s.hi), r = hi - lo || 1;
+        const Y = (v) => (40 - ((phys(g, v) - lo) / r) * 36 - 2).toFixed(1);
+        let pts = "";
+        const i0 = Math.max(0, bsearch(s.t, a));
+        const step = Math.max(1, Math.floor((s.t.length - i0) / 1500));
+        for (let i = i0; i < s.t.length; i += step) {
+          const x = (X(s.t[i]) * 10).toFixed(1);
+          if (pts) pts += ` ${x},${Y(s.v[i - 1] ?? s.v[i])}`;   // hold the previous value until the change
+          pts += ` ${x},${Y(s.v[i])}`;
+        }
+        pts += ` 1000,${Y(s.v[s.v.length - 1])}`;
+        band.innerHTML = `<svg viewBox="0 0 1000 40" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts.trim()}"></polyline></svg>`;
+        return;
+      }
+      const i0 = Math.max(0, bsearch(s.t, a));
+      for (let i = i0; i < s.t.length; i++) {
+        const v = s.v[i], x0 = X(s.t[i]), x1 = X(s.t[i + 1] ?? b);
+        if (x1 <= x0) continue;
+        if (kind === "lamp" && !v) continue;
+        const name = kind === "lamp" ? "On" : g.vals?.[String(v)] ?? String(v);
+        const seg = text("span", `dt-seg ${kind === "lamp" ? "on" : color(v)}`, x1 - x0 > 5 ? name : "");
+        seg.style.left = `${x0}%`;
+        seg.style.width = `${x1 - x0}%`;
+        seg.title = name;
+        band.append(seg);
+      }
+    }
+    // drag along the timeline to look at any moment of a capture
+    if (st.source === "file") {
+      track.classList.add("scrub");
+      const at = (e) => {
+        const r = track.getBoundingClientRect();
+        dash.t = dash.range[0] + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (dash.range[1] - dash.range[0]);
+        updateDecoded();
+      };
+      track.addEventListener("pointerdown", (e) => { track.setPointerCapture(e.pointerId); dash.playing = false; at(e); });
+      track.addEventListener("pointermove", (e) => { if (track.hasPointerCapture(e.pointerId)) at(e); });
+    }
+
+    function update(t) {
+      const s = c();
+      const [a, b] = dash.range;
+      cur.style.left = `${((t - a) / (b - a || 1)) * 100}%`;
+      const v = s ? rawAt(s, t) : null;
+      if (kind === "state") {
+        chips.replaceChildren();
+        for (const [x, n] of states) {
+          const ch = text("span", `dt-chip ${color(x)}${x === v ? " on" : ""}`, n);
+          chips.append(ch);
+        }
+        const name = v == null ? null : g.vals?.[String(v)];
+        if (v != null && name == null) chips.append(text("span", "dt-chip c-x on unnamed", `raw ${v}`));
+        big.textContent = v == null ? "—" : name ?? `raw ${v}`;
+        big.className = `dt-big ${v == null ? "" : color(v)}`;
+      } else if (kind === "lamp") {
+        big.textContent = v == null ? "—" : v ? "On" : "Off";
+        big.classList.toggle("on", !!v);
+      } else {
+        big.textContent = v == null ? "—" : `${fmtNum(phys(g, v))}${g.u ? ` ${g.u}` : ""}`;
+        if (s) {
+          const lo = phys(g, s.lo), hi = phys(g, s.hi);
+          fill.style.width = v == null || hi === lo ? "0%" : `${((phys(g, v) - lo) / (hi - lo)) * 100}%`;
+          sub.textContent = `${fmtNum(lo)} – ${fmtNum(hi)}${g.u ? ` ${g.u}` : ""} in this ${st.source === "file" ? "capture" : "window"}`;
+        }
+      }
+    }
+
+    // name the values a signal takes, so it reads as states (gear letters, modes) and they go in the DBC file
+    const s0 = c();
+    if (s0 && s0.seen.size <= 32 && kind !== "lamp") {
+      const btn = text("button", "btn small ghost", g.vals && Object.keys(g.vals).length ? "Edit value names" : "Name values…");
+      btn.type = "button";
+      const ed = el("div", "dt-names");
+      ed.hidden = true;
+      btn.addEventListener("click", () => {
+        ed.hidden = !ed.hidden;
+        if (ed.hidden) return;
+        ed.replaceChildren(text("p", "can-note", "The values seen. Give each a name (P, R, N, D…); blank removes it. Names are saved with the signal and exported as VAL_ lines."));
+        const seen = new Map(series(g).seen);
+        for (const x of Object.keys(g.vals || {})) if (!seen.has(Number(x))) seen.set(Number(x), 0);   // named but not in this traffic
+        const total = [...seen.values()].reduce((x, y) => x + y, 0) || 1;
+        for (const [x, n] of [...seen.entries()].sort((p, q) => p[0] - q[0])) {
+          const row = el("label", "dt-name-row");
+          const inp = el("input", "field small");
+          inp.type = "text";
+          inp.value = g.vals?.[String(x)] ?? "";
+          inp.placeholder = "Name";
+          inp.addEventListener("change", () => {
+            g.vals ||= {};
+            if (inp.value.trim()) g.vals[String(x)] = inp.value.trim();
+            else delete g.vals[String(x)];
+            store(SIG_KEY, st.signals);
+          });
+          row.append(text("span", "num", String(x)), inp, text("span", "num can-count", n ? `${Math.max(1, Math.round((n / total) * 100))}% of frames` : "not seen here"));
+          ed.append(row);
+        }
+        const done = text("button", "btn small primary", "Done");
+        done.type = "button";
+        done.addEventListener("click", () => { document.activeElement?.blur(); draw(true); });
+        ed.append(done);
+      });
+      foot.append(btn);
+      box.append(ed);
+    }
+
+    renderTrack();
+    dash.tiles.push({ update, track: renderTrack });
+    return box;
+  }
+
+  function updateDecoded() {
+    const t = cursorT();
+    for (const tile of dash.tiles) tile.update(t);
+    const [a, b] = dash.range;
+    const r = $("can-dec-range");
+    if (r && document.activeElement !== r) r.value = String(Math.round(((t - a) / (b - a || 1)) * 1000));
+    const lab = document.querySelector(".can-dec-time");
+    if (lab) lab.textContent = `${(t - a).toFixed(2)} s of ${(b - a).toFixed(1)} s`;
+    const p = $("can-dec-play");
+    if (p) p.textContent = dash.playing ? "Pause" : "Play";
   }
 
   function drawSignals(body) {
