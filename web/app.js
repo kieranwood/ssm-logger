@@ -44,6 +44,7 @@ const state = {
   defsReady: null,     // promise, once live mode has been used
   rec: null,           // {name, channels, t, y, marks, info, findings, live}
   selected: [],        // channel indices, in chart order
+  ovName: null,        // channel shown in the whole-session overview; null = auto (revs, else speed)
   maxChart: null,      // channel index of the maximised chart, or null
   charts: new Map(),   // channel index -> {u, el, valEl}
   highlight: [],       // [[t0, t1]] shaded on every chart (from the selected finding)
@@ -156,17 +157,20 @@ function showRecording(rec) {
   const byName = new Map(rec.channels.map((c, i) => [c.name, i]));
   colorOf.clear();
   state.selected = defaultChartSelection(rec);
+  state.ovName = null;
   const remembered = chartLayouts()[cl.name];
   if (remembered) {
     const sel = remembered.channels.filter((n) => byName.has(n)).map((n) => byName.get(n));
     if (sel.length) {
       state.selected = sel;
       state.chartLayout = remembered.mode === "overlay" ? "overlay" : "stacked";
+      state.ovName = remembered.overview || null;
     } else cl.name = DEFAULT_LAYOUT;      // none of its channels are in this log: show the defaults
   } else cl.name = DEFAULT_LAYOUT;
   refreshChartLayoutSelect();
 
   state.selected.forEach(colorFor);
+  buildOverviewPicker();
   buildChannelList();
   buildCharts();
   $("filter").disabled = false;
@@ -748,15 +752,53 @@ function updateChartBar() {
 // drag across it to pick a window, click to move the window there.
 const ov = { key: "", path: null, drag: null };
 
-function overviewChannel() {
-  return state.overlayFocus != null && state.selected.includes(state.overlayFocus) ? state.overlayFocus : state.selected[0];
+// The channel shown: the one picked under "Whole session", or by default revs (or speed), whose shape
+// - idle, pulling away, cruising, lifting off, stopping - makes it easy to find a moment in the drive.
+const OVERVIEW_AUTO = ["Engine Speed", "Vehicle Speed"];
+
+function autoOverviewChannel() {
+  const rec = state.rec;
+  for (const n of OVERVIEW_AUTO) {
+    const i = rec.channels.findIndex((c) => c.name === n);
+    if (i >= 0) return i;
+  }
+  return state.selected[0];
 }
+
+function overviewChannel() {
+  const i = state.ovName ? state.rec.channels.findIndex((c) => c.name === state.ovName) : -1;
+  return i >= 0 ? i : autoOverviewChannel();
+}
+
+/** Fill the channel picker (on a new recording); keeps the picked channel when it is in this log. */
+function buildOverviewPicker() {
+  const sel = $("overview-ch");
+  sel.replaceChildren(new Option("Auto", ""));
+  state.rec.channels.forEach((c) => sel.append(new Option(c.name, c.name)));
+  refreshOverviewPicker();
+}
+
+function refreshOverviewPicker() {
+  const sel = $("overview-ch"), rec = state.rec;
+  if (!rec || !sel.options.length) return;
+  const auto = autoOverviewChannel();
+  sel.options[0].text = auto == null ? "Auto" : `Auto: ${rec.channels[auto].name}`;
+  sel.value = state.ovName && rec.channels.some((c) => c.name === state.ovName) ? state.ovName : "";
+  sel.title = rec.channels[overviewChannel()]?.name ?? "";
+}
+
+$("overview-ch").addEventListener("change", (e) => {
+  state.ovName = e.target.value || null;
+  chartsChanged();
+  refreshOverviewPicker();
+  drawOverview();
+});
 
 function drawOverview() {
   const rec = state.rec, cv = $("overview-canvas");
   if (!rec || $("overview").hidden || !cv.clientWidth) return;
   const i = overviewChannel();
-  $("overview-name").textContent = i == null ? "" : rec.channels[i].name;
+  refreshOverviewPicker();
   const dpr = devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); ov.key = "";
@@ -767,6 +809,12 @@ function drawOverview() {
   const t = rec.t, n = t.length;
   if (i == null || n < 2) return;
   const t0 = t[0], t1 = t[n - 1], X = (x) => ((x - t0) / (t1 - t0 || 1)) * w;
+  // the open finding's time ranges, behind the line
+  ctx.fillStyle = cssVar("--highlight");
+  for (const [a, b] of state.highlight) {
+    const xa = X(a), xb = X(b);
+    ctx.fillRect(xa, 0, Math.max(3, xb - xa), h);
+  }
   // the line: min/max per pixel column, rebuilt when the data or size changed (live: at most once a second)
   const key = `${i}|${w}|${h}|${n}`;
   if (key !== ov.key && (!rec.live || !ov.built || performance.now() - ov.built > 1000 || !ov.path)) {
@@ -798,6 +846,24 @@ function drawOverview() {
   ctx.lineWidth = 1.25;
   ctx.stroke(ov.path);
   ctx.globalAlpha = 1;
+  // markers (M): a dashed line and the marker's number
+  if (rec.marks.length) {
+    ctx.save();
+    ctx.strokeStyle = ctx.fillStyle = cssVar("--mark");
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.font = `600 10px "JetBrains Mono", ui-monospace, monospace`;
+    ctx.textBaseline = "top";
+    for (const [mt, num] of rec.marks) {
+      const x = Math.round(X(mt)) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 12);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+      ctx.fillText(String(num), Math.min(x + 3, w - 8), 2);
+    }
+    ctx.restore();
+  }
   // the window in view (or being dragged)
   const [a, b] = ov.drag?.moved ? [Math.min(ov.drag.a, ov.drag.b), Math.max(ov.drag.a, ov.drag.b)] : visibleRange();
   if (Number.isFinite(a)) {
@@ -911,6 +977,7 @@ function applyChartLayout(name) {
   if (name === DEFAULT_LAYOUT) {
     sel = defaultChartSelection(rec);
     mode = "stacked";
+    state.ovName = null;
   } else {
     const L = chartLayouts()[name];
     if (!L) return;
@@ -924,6 +991,7 @@ function applyChartLayout(name) {
     const missing = L.channels.length - sel.length;
     if (missing) setStatus(`Layout “${name}”: ${missing} of its channels aren't in this log.`);
     mode = L.mode === "overlay" ? "overlay" : "stacked";
+    state.ovName = L.overview || null;
   }
   if (state.maxChart != null) maximiseChart(null);
   state.selected = sel;
@@ -954,7 +1022,8 @@ function confirmChartLayout() {
   if (layoutAction === "save") {
     const name = $("layout-name").value.trim();
     if (!name || name.toLowerCase() === "default") return;
-    layouts[name] = { channels: state.selected.map((i) => state.rec.channels[i].name), mode: state.chartLayout };
+    layouts[name] = { channels: state.selected.map((i) => state.rec.channels[i].name), mode: state.chartLayout,
+                      overview: state.ovName };
     cl.name = name;
     storeChartLayouts(layouts);
     setStatus(`Saved the chart layout “${name}”.`);
@@ -995,6 +1064,7 @@ function resetZoom() {
 
 function redrawAll() {
   for (const c of state.charts.values()) c.u.redraw(false);
+  drawOverview();
 }
 
 // ------------------------------------------------------------------ findings
@@ -2378,7 +2448,7 @@ function describeLayoutName() {
   $("layout-ok").disabled = !name || reserved;
   $("layout-msg").textContent = reserved ? "“Default” is the built-in layout; pick another name."
     : name in (charts ? chartLayouts() : savedLayouts()) ? `Replaces the saved layout “${name}”.`
-    : charts ? "Saves the charted channels, their order and Stacked/Overlay, to use with any recording or live session."
+    : charts ? "Saves the charted channels, their order, Stacked/Overlay and the whole-session channel, to use with any recording or live session."
     : "Saves the gauges shown, their styles and sizes, to use with any recording or live session.";
 }
 

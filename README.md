@@ -18,7 +18,9 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   grip in its title to move it up or down. Click **⤢** on a chart to maximise it, so it fills the window while
   you focus on that sensor (**Esc** or **⤡ Restore** brings the others back).
   On the website, **Save layout…** keeps the charted channels, their order and Stacked/Overlay as a
-  named chart layout; the last one picked opens with the next recording or live session.
+  named chart layout (with the Whole session channel); the last one picked opens with the next recording or live session.
+  The **Whole session** strip under the charts shows revs across the whole log by default (pick any
+  channel there), with your markers and the open Analysis finding's times marked on it.
 - **Gauges** (the Gauges button, or **G**): a glanceable alternative to the charts. Each channel
   gets the gauge that suits it - a needle for revs, speed, coolant and boost, a centre bar for fuel
   trims and AFR, a bar for throttle, voltage and airflow, a big number with a one-minute trend,
