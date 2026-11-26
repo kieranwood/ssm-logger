@@ -2387,6 +2387,8 @@ const gv = {
   idx: 0, resetT: -Infinity, playing: false, playT: 0, lastFrame: 0,
   defaultSel: [], layout: "",      // layout: a saved layout's name, DEFAULT_LAYOUT, or "" (changed since)
   sizeOf: {},                      // per-gauge sizes (Size: Per gauge), name -> key of TILE_SIZES
+  view: "grid",                    // grid, or a fixed view from gauge-views.js
+  viewObj: null,
 };
 // Per-gauge sizes, in cells of the "Per gauge" grid (50 x 45 px plus 10 px gaps): [columns, rows].
 const TILE_SIZES = { s: [3, 4, "S"], m: [4, 5, "M"], l: [6, 7, "L"], w: [6, 4, "Wide"] };
@@ -2408,7 +2410,7 @@ function saveGaugePrefs(custom = true, layouts = undefined) {
   const sizes = { ...(p.sizes || {}) };
   for (const n of gv.index.keys()) delete sizes[n];
   Object.assign(sizes, gv.sizeOf);
-  const next = { selected: gv.sel.slice(), types, size: $("g-size").value, sizes, hero: $("g-hero").checked,
+  const next = { selected: gv.sel.slice(), types, size: $("g-size").value, sizes, hero: $("g-hero").checked, view: gv.view,
                  layouts: layouts ?? p.layouts ?? {}, layout: gv.layout };
   try { localStorage.setItem(GAUGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
   refreshLayoutSelect();
@@ -2548,6 +2550,8 @@ function setupGauges(fresh = true) {
     gv.sizeOf = pickSizes(prefs.sizes);
     if (prefs.size) $("g-size").value = prefs.size;
     $("g-hero").checked = prefs.hero !== false;
+    gv.view = GaugeViews.VIEWS.some(([k]) => k === prefs.view) ? prefs.view : "grid";
+    showGaugeViewButtons();
     $("gauge-grid").className = `size-${$("g-size").value}`;
     gv.resetT = -Infinity;
     gv.idx = 0;
@@ -2584,6 +2588,7 @@ function layoutTiles() {
   const cols = Math.max(1, Math.floor((grid.clientWidth + CELL_GAP) / (CELL_W + CELL_GAP)));
   const heroW = $("gauge-hero").clientWidth - 32;
   for (const [name, tile] of gv.tiles) {
+    if (tile.fixed) continue;
     if (tile.hero) {
       const px = Math.max(160, Math.min(heroPx(name), heroW > 0 ? heroW : Infinity));
       tile.el.style.width = `${px}px`;
@@ -2603,6 +2608,17 @@ function buildGaugeTiles() {
   grid.replaceChildren();
   heroRow.replaceChildren();
   gv.tiles.clear();
+  gv.viewObj = null;
+  const fixed = gv.view !== "grid";
+  $("gauges").dataset.view = fixed ? "fixed" : "grid";
+  grid.hidden = fixed;
+  $("gauge-view").hidden = !fixed;
+  if (fixed) {
+    heroRow.hidden = true;
+    buildFixedView();
+    return;
+  }
+  $("gauge-view").replaceChildren();
   for (const name of gv.sel) {
     const i = gv.index.get(name);
     const ch = state.rec.channels[i];
@@ -2690,6 +2706,42 @@ function dragToMove(el, name) {
   });
 }
 
+// ---- fixed views (By system, Cluster, Signal path): see gauge-views.js
+function buildFixedView() {
+  gv.viewObj = GaugeViews.build(gv.view, $("gauge-view"), {
+    has: (name) => gv.index.has(name),
+    addDial: (name, canvas, el, opts) => {
+      gv.tiles.set(name, { i: gv.index.get(name), el, canvas, fixed: true, type: "dial",
+                           inner: opts.inner && gv.index.has(opts.inner) ? opts.inner : null });
+    },
+  });
+  drawGauges();
+}
+
+function showGaugeViewButtons() {
+  const box = $("g-view");
+  if (!box.children.length) {
+    for (const [key, label, d1, d2] of GaugeViews.VIEWS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "seg";
+      b.dataset.view = key;
+      b.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ` +
+        `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d1}"></path>${d2 ? `<path d="${d2}"></path>` : ""}</svg>`;
+      b.append(label);
+      b.addEventListener("click", () => {
+        if (gv.view === key) return;
+        gv.view = key;
+        saveGaugePrefs(false);
+        showGaugeViewButtons();
+        buildGaugeTiles();
+      });
+      box.append(b);
+    }
+  }
+  for (const b of box.children) b.setAttribute("aria-pressed", String(b.dataset.view === gv.view));
+}
+
 /** Move gauge name to just before (or after) gauge target. */
 function moveGauge(name, target, after) {
   if (name === target || !gv.sel.includes(name) || !gv.sel.includes(target)) return;
@@ -2749,7 +2801,7 @@ function drawGauges() {
   const colors = gaugeColors();
   for (const [name, tile] of gv.tiles) {
     const ch = rec.channels[tile.i], col = rec.y[tile.i];
-    const type = gv.typeOf[name] || gv.specs[name].default;
+    const type = tile.type || gv.typeOf[name] || gv.specs[name].default;
     let spec = gv.specs[name].by_type[type];
     const value = idx == null ? null : col[idx];
     const [mn, mx] = idx == null ? [null, null] : rangeOf(`${name}|mm`, col, t, from, idx);
@@ -2768,6 +2820,10 @@ function drawGauges() {
     const g = { spec, value: value ?? null, min: mn, max: mx,
                 decimals: spec.decimals ?? Math.min(ch.decimals ?? 2, 2),
                 units: ch.units || "", hist, tNow: idx == null ? 0 : t[idx] };
+    if (tile.inner) {
+      const iv = idx == null ? null : rec.y[gv.index.get(tile.inner)][idx];
+      g.inner = { value: iv ?? NaN, lo: 0, hi: 100, label: iv == null ? "" : `load ${Math.round(iv)}%` };
+    }
     tile.g = g;
     // needles and bars spring to the new value; the number shown is always the real one
     const has = g.value != null && Number.isFinite(g.value);
@@ -2780,10 +2836,34 @@ function drawGauges() {
     tile.el.classList.toggle("z-warn", level === "warn");
     tile.el.classList.toggle("z-danger", level === "danger");
     const status = has && type !== "dial" && type !== "digital" && type !== "lamp" ? zoneStatus(spec, g.value) : "";
-    tile.statusEl.hidden = !status;
-    tile.statusEl.textContent = status;
-    tile.statusEl.className = `g-status ${level || ""}`;
+    if (tile.statusEl) {
+      tile.statusEl.hidden = !status;
+      tile.statusEl.textContent = status;
+      tile.statusEl.className = `g-status ${level || ""}`;
+    }
     drawGauge(tile.canvas, g, colors);
+  }
+  if (gv.viewObj) {
+    const cache = new Map();
+    const get = (name) => {
+      if (cache.has(name)) return cache.get(name);
+      const i = gv.index.get(name);
+      let d = null;
+      if (i != null && idx != null) {
+        const col = rec.y[i], s = gv.specs[name];
+        const [mn, mx] = rangeOf(`${name}|mm`, col, t, from, idx);
+        d = { value: col[idx] ?? null, min: mn, max: mx, spec: s.by_type[s.default], units: rec.channels[i].units || "",
+              decimals: s.by_type[s.default].decimals ?? Math.min(rec.channels[i].decimals ?? 2, 2) };
+      }
+      cache.set(name, d);
+      return d;
+    };
+    const secs = idx == null ? 0 : Math.max(0, Math.floor(t[idx] - t[0]));
+    gv.viewObj.update(get, {
+      mil: codesState.data?.status?.mil ?? null,
+      elapsed: `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} elapsed`,
+      rows: `${(idx == null ? 0 : idx + 1).toLocaleString("en")} rows`,
+    });
   }
   if (!easing && !REDUCED_MOTION.matches) { easing = true; gv.easeLast = performance.now(); requestAnimationFrame(easeFrame); }
 }

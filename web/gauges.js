@@ -148,6 +148,24 @@ function drawDial(ctx, w, h, g, c) {
     ctx.strokeStyle = c.track;
     ctx.stroke();
   }
+  // optional inner ring: a second channel (e.g. engine load inside revs) on the same sweep
+  if (g.inner && inner > 30) {
+    const ir = inner - 5, iw = R >= 120 ? 5 : 4, I = g.inner;
+    const fi = Math.max(0, Math.min(1, (I.value - I.lo) / (I.hi - I.lo || 1)));
+    ctx.lineWidth = iw;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.arc(cx, cy, ir, (135 * Math.PI) / 180, (405 * Math.PI) / 180);
+    ctx.strokeStyle = c.track;
+    ctx.stroke();
+    if (Number.isFinite(I.value) && fi > 0.002) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, ir, (135 * Math.PI) / 180, ((135 + 270 * fi) * Math.PI) / 180);
+      ctx.strokeStyle = withAlpha(c.lit.none, 0.55);
+      ctx.stroke();
+    }
+    ctx.lineCap = "butt";
+  }
   // track in zone tints, with small gaps between zones
   const segs = [];
   let at = lo;
@@ -252,9 +270,13 @@ function drawDial(ctx, w, h, g, c) {
   ctx.font = font(13, 400);
   ctx.fillStyle = c.muted;
   ctx.fillText(g.units, cx, vy + 20);
+  if (g.inner?.label) {
+    ctx.font = mono(12, 400);
+    ctx.fillText(g.inner.label, cx, vy + 38);
+  }
   if (status) {
     ctx.font = font(11, 600);
-    const tw = ctx.measureText(status).width + 18, ph = 22, py = vy + 30;
+    const tw = ctx.measureText(status).width + 18, ph = 22, py = vy + (g.inner?.label ? 46 : 30);
     if (level === "danger") ctx.globalAlpha = pulseAlpha(g);
     roundRect(ctx, cx - tw / 2, py, tw, ph, ph / 2);
     ctx.fillStyle = c.pill[lvl(level)];

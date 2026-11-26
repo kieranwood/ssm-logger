@@ -33,6 +33,11 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   or Wide) so the important ones stand out; smaller gauges fill in the gaps beside big ones.
   On the website, speed, revs and coolant (as dials) sit in a row of big dials above the rest
   ("Big dials on top" turns this off).
+  Besides the free **Grid**, three fixed views arrange specific channels as a dashboard: **By system**
+  (engine, fuel mixture, air intake, temperature & electrical, with the trims shown as short-term +
+  long-term = total and a note when the front and rear oxygen sensors disagree), **Cluster** (revs and
+  coolant dials around a big speed readout, warning lamps and the total trim) and **Signal path** (air in →
+  engine → exhaust → ECU correction, each step turning amber or red when its readings stop agreeing).
   Save a set of gauges (with their styles and sizes) as a named layout (e.g. "Warm-up",
   "Fuel trims") to switch between, or reset to the default.
 - **Fault codes**: stored, pending and permanent OBD-II codes, freeze frame, readiness
