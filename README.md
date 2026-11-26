@@ -87,6 +87,10 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   its `_ssm.csv`. A monitor of every message (live table, bit activity, traffic timeline), a signal finder
   that compares picked bits with a logged channel and ranks every field on the bus, a map of which
   module sends what (your assignments), and the signals found so far, exported or imported as a DBC file.
+  The signals worked out so far for the 2012 Forester are in [`can/forester-2012.dbc`](can/forester-2012.dbc),
+  with a note on each saying how it was confirmed, and notes on the messages that are still only candidates.
+  To carry on: open a capture in the CAN window, Signals ▸ Import DBC… that file, find more in the signal
+  finder, then Export DBC ▸ Save file and save it back over `can/forester-2012.dbc`.
 - **Engine animation** (website, Tools ▸ Engine animation…): a schematic of the boxer engine from above,
   pistons, valves, cams, spark and injection moving through the 1-3-2-4 cycle on the same calculated
   timing, slowed right down, with a crank-angle scrubber. Misfire counts come from the ECU's roughness

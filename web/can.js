@@ -7,7 +7,7 @@
 
 const CanBus = (() => {
   const KEEP_S = 120;                       // live: seconds of frames kept per message
-  const SIG_KEY = "ssm-logger.canSignals", NODE_KEY = "ssm-logger.canNodes";
+  const SIG_KEY = "ssm-logger.canSignals", NODE_KEY = "ssm-logger.canNodes", MSG_KEY = "ssm-logger.canMessages";
   const MODULES = [
     ["ecm", "Engine control"], ["tcm", "Transmission"], ["abs", "ABS / stability"], ["steer", "Steering angle"],
     ["biu", "Body integration"], ["meter", "Instrument cluster"], ["other", "Other module"],
@@ -27,6 +27,7 @@ const CanBus = (() => {
     finder: { id: null, start: 0, len: 16, order: "be", ref: null },
     net: { sel: "unassigned" },
     signals: load(SIG_KEY, []), nodes: load(NODE_KEY, {}),
+    messages: load(MSG_KEY, {}),            // id (hex) -> {name, note}: message names and notes, kept through DBC files
     showDbc: true, loadHist: [], raf: 0, lastDraw: 0, best: null, bestKey: "",
   };
 
@@ -331,8 +332,8 @@ const CanBus = (() => {
         const d = m.d[m.d.length - 1] || [];
         const row = el("button", "can-row");
         row.type = "button";
-        const labs = labelsFor(m.id), node = nodeOf(m.id);
-        const label = labs.length ? labs.join(", ") : node ? moduleName(node.node) : "Unknown";
+        const labs = labelsFor(m.id), node = nodeOf(m.id), note = st.messages[hx(m.id, 0)]?.note;
+        const label = labs.length ? labs.join(", ") : note ? note : node ? moduleName(node.node) : "Unknown";
         row.innerHTML = `<span class="num id"></span><span class="lab${labs.length ? "" : " dim"}"></span><span class="num">${d.length}</span>` +
           `<span class="num">${Math.round(rateOf(m, now))} Hz</span><span class="bytes"></span>` +
           `<span class="act"><span class="bar"><i style="width:${(m.changed.size / 8) * 100}%"></i></span><span class="num">${m.changed.size}/8</span></span>`;
@@ -515,7 +516,8 @@ const CanBus = (() => {
         const name = (nameIn.value.trim() || `${f.ref}`).replace(/\s+/g, "_");
         st.signals = st.signals.filter((g) => g.name !== name);
         st.signals.push({ name, id: f.id, st: f.start, len: f.len, e: f.order, f: Number(s.a.toPrecision(4)), o: Number(s.b.toFixed(3)),
-                          u: unit, min: Number(lo.toFixed(1)), max: Number(hi.toFixed(1)), src: "found", r: Number(ar.toFixed(3)) });
+                          u: unit, min: Number(lo.toFixed(1)), max: Number(hi.toFixed(1)), src: "found", r: Number(ar.toFixed(3)),
+                          note: `Signal finder: r = ${s.r.toFixed(2)} against ${f.ref}${st.source === "file" ? ` in ${st.srcName}` : ""}, ${new Date().toISOString().slice(0, 10)}.` });
         store(SIG_KEY, st.signals);
         setStatus(`Saved the signal ${name} (${idTxt(f.id)} bits ${f.start}–${f.start + f.len - 1}). See it under Signals.`);
         draw(true);
@@ -683,34 +685,49 @@ const CanBus = (() => {
   const dbcStart = (g) => (g.e === "be" ? (g.st >> 3) * 8 + (7 - (g.st & 7)) : g.st);
   const nodeName = (id) => { const n = nodeOf(id); return n ? moduleName(n.node).replace(/[^A-Za-z0-9]+/g, "_").replace(/_$/, "") : "Vector__XXX"; };
 
+  const dbcId = (id) => (id > 0x7ff ? (id | 0x80000000) >>> 0 : id);
+  const q = (t) => String(t).replace(/"/g, "'");
+
   function dbcText() {
     const inc = st.signals.filter((g) => g.inc !== false);
     const msgs = new Map();
     for (const g of inc) (msgs.get(g.id) || msgs.set(g.id, []).get(g.id)).push(g);
-    const nodes = [...new Set([...msgs.keys()].map(nodeName).filter((n) => n !== "Vector__XXX"))];
-    const L = ['VERSION ""', "", "NS_ :", "", "BS_:", "", `BU_: ${nodes.join(" ")}`, ""];
-    for (const id of [...msgs.keys()].sort((a, b) => a - b)) {
-      const dbcId = id > 0x7ff ? (id | 0x80000000) >>> 0 : id;
-      L.push(`BO_ ${dbcId} MSG_${hx(id, 0)}: 8 ${nodeName(id)}`);
+    for (const [k, v] of Object.entries(st.messages)) if (v.note && !msgs.has(parseInt(k, 16))) msgs.set(parseInt(k, 16), []);
+    const ids = [...msgs.keys()].sort((a, b) => a - b);
+    const nodes = [...new Set(ids.map(nodeName).filter((n) => n !== "Vector__XXX"))];
+    const L = ['VERSION ""', "", "NS_ :", "    CM_", "    VAL_", "", "BS_:", "", `BU_: ${nodes.join(" ")}`, ""];
+    for (const id of ids) {
+      L.push(`BO_ ${dbcId(id)} ${st.messages[hx(id, 0)]?.name || `MSG_${hx(id, 0)}`}: 8 ${nodeName(id)}`);
       for (const g of msgs.get(id)) {
         L.push(` SG_ ${g.name} : ${dbcStart(g)}|${g.len}@${g.e === "be" ? 0 : 1}${g.signed ? "-" : "+"} (${g.f},${g.o}) [${g.min ?? 0}|${g.max ?? 0}] "${g.u || ""}" Vector__XXX`);
       }
       L.push("");
     }
-    L.push(`CM_ "Exported from SSM Log Viewer. Signals found by comparing CAN traffic with logged SSM values; not official Subaru definitions.";`);
+    L.push(`CM_ "${q(st.fileNote || "Exported from SSM Log Viewer. Signals found by comparing CAN traffic with logged SSM values; not official Subaru definitions.")}";`);
+    for (const id of ids) if (st.messages[hx(id, 0)]?.note) L.push(`CM_ BO_ ${dbcId(id)} "${q(st.messages[hx(id, 0)].note)}";`);
+    for (const g of inc) if (g.note) L.push(`CM_ SG_ ${dbcId(g.id)} ${g.name} "${q(g.note)}";`);
+    for (const g of inc) {
+      if (g.vals && Object.keys(g.vals).length) {
+        L.push(`VAL_ ${dbcId(g.id)} ${g.name} ${Object.entries(g.vals).map(([v, t]) => `${v} "${q(t)}"`).join(" ")} ;`);
+      }
+    }
     return L.join("\n") + "\n";
   }
 
-  /** Read BO_/SG_ lines of a DBC file into signals (marked imported). */
+  /** Read a DBC file: signals (marked imported), their notes (CM_ SG_) and value names (VAL_), and
+   *  message names and notes (BO_, CM_ BO_), which go into st.messages. Returns the signals. */
   function parseDbc(txt) {
     const out = [];
     let id = null;
+    const idOf = (n) => { n = Number(n); return n & 0x80000000 ? n & 0x1fffffff : n; };
+    const unq = (t) => t.replace(/\\"/g, '"');
     for (const raw of txt.split(/\r?\n/)) {
       const line = raw.trim();
       let m = line.match(/^BO_\s+(\d+)\s+\w+\s*:\s*\d+\s+(\w+)/);
       if (m) {
-        let n = Number(m[1]);
-        id = n & 0x80000000 ? n & 0x1fffffff : n;
+        id = idOf(m[1]);
+        const bo = line.match(/^BO_\s+\d+\s+(\w+)/)[1];
+        if (!/^MSG_[0-9A-F]+$/i.test(bo)) (st.messages[hx(id, 0)] ||= {}).name = bo;
         if (m[2] && m[2] !== "Vector__XXX") {
           const mod = MODULES.find(([, name]) => name.replace(/[^A-Za-z0-9]+/g, "_").replace(/_$/, "") === m[2]);
           if (mod && !st.nodes[hx(id, 0)]) st.nodes[hx(id, 0)] = { node: mod[0], how: "likely" };
@@ -725,6 +742,20 @@ const CanBus = (() => {
                    f: Number(f), o: Number(o), min: Number(min), max: Number(max), u, src: "imported" });
       }
     }
+    const find = (mid, name) => out.find((g) => g.id === idOf(mid) && g.name === name);
+    for (const m of txt.matchAll(/CM_\s+SG_\s+(\d+)\s+(\w+)\s+"((?:[^"\\]|\\.)*)"\s*;/g)) {
+      const g = find(m[1], m[2]);
+      if (g) g.note = unq(m[3]);
+    }
+    for (const m of txt.matchAll(/CM_\s+BO_\s+(\d+)\s+"((?:[^"\\]|\\.)*)"\s*;/g)) {
+      (st.messages[hx(idOf(m[1]), 0)] ||= {}).note = unq(m[2]);
+    }
+    const file = txt.match(/^CM_\s+"((?:[^"\\]|\\.)*)"\s*;/m);
+    if (file) st.fileNote = unq(file[1]);
+    for (const m of txt.matchAll(/VAL_\s+(\d+)\s+(\w+)\s+((?:-?\d+\s+"[^"]*"\s*)+);/g)) {
+      const g = find(m[1], m[2]);
+      if (g) g.vals = Object.fromEntries([...m[3].matchAll(/(-?\d+)\s+"([^"]*)"/g)].map((x) => [x[1], x[2]]));
+    }
     return out;
   }
 
@@ -736,6 +767,7 @@ const CanBus = (() => {
     if (v === null) return "—";
     if (g.signed && v >= 2 ** (g.len - 1)) v -= 2 ** g.len;
     const x = v * g.f + g.o;
+    if (g.vals && g.vals[String(v)] != null) return `${v} · ${g.vals[String(v)]}`;
     return `${Math.abs(x) >= 100 ? x.toFixed(0) : x.toFixed(2)} ${g.u || ""}`.trim();
   }
 
@@ -753,11 +785,15 @@ const CanBus = (() => {
       const f = file.files[0];
       if (!f) return;
       const got = parseDbc(await f.text());
-      const names = new Set(st.signals.map((g) => g.name));
-      const added = got.filter((g) => !names.has(g.name));
-      st.signals.push(...added);
+      // a signal of the same name from an earlier import is replaced (the file is newer);
+      // one you found or added yourself is kept
+      const mine = new Set(st.signals.filter((g) => g.src !== "imported").map((g) => g.name));
+      const added = got.filter((g) => !mine.has(g.name));
+      const addedNames = new Set(added.map((g) => g.name));
+      st.signals = st.signals.filter((g) => !addedNames.has(g.name)).concat(added);
       store(SIG_KEY, st.signals);
       store(NODE_KEY, st.nodes);
+      store(MSG_KEY, st.messages);
       st.importMsg = `Imported ${f.name}: ${added.length} signal${added.length === 1 ? "" : "s"} added` +
         (got.length - added.length ? `, ${got.length - added.length} skipped (same name as one of yours)` : "") + ".";
       draw(true);
@@ -788,6 +824,13 @@ const CanBus = (() => {
       const name = el("span", "nm");
       name.append(text("span", "num", g.name));
       if (conf[g.name]) name.append(text("small", "", `Overlaps ${conf[g.name]}`));
+      const note = el("input", "can-note-in");
+      note.type = "text";
+      note.value = g.note || "";
+      note.placeholder = "Add a note…";
+      note.setAttribute("aria-label", `Note for ${g.name}`);
+      note.addEventListener("change", () => { g.note = note.value.trim(); store(SIG_KEY, st.signals); });
+      name.append(note);
       const src = { found: "Signal finder", imported: "Imported", manual: "Added by hand" }[g.src] || g.src;
       const cells = [idTxt(g.id), `byte ${g.st >> 3}.${g.e === "be" ? 7 - (g.st & 7) : g.st & 7}`, String(g.len), g.e === "be" ? "Big" : "Little",
                      String(g.f), String(g.o), g.u || "—", decoded(g)];

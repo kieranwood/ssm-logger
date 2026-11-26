@@ -1418,6 +1418,10 @@ dialog.can .td-head { align-items: flex-start; }
 .can-sig .nm { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .can-sig .nm span { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .can-sig .nm small { font-size: 11px; color: var(--g-warn); }
+.can-note-in { width: 100%; height: 26px; margin-top: 2px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; background: transparent;
+  color: var(--muted); font: 400 12px var(--font); }
+.can-note-in:hover, .can-note-in:focus { border-color: var(--border); background: var(--field); color: var(--text); outline: none; }
+.can-sig { min-height: 58px; }
 .can-sig .chip { height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-self: start; white-space: nowrap; background: var(--raised); color: var(--text-2); }
 .can-sig .chip.found { background: var(--ok-tint); color: var(--ok); }
 .can-sig .chip.imported { background: var(--info-tint); color: var(--info-c); }
