@@ -45,6 +45,17 @@ class DemoEcu {
     this.codes = { 0x03: [[0x01, 0x71]], 0x07: [[0x01, 0x71]], 0x0a: [[0x01, 0x71]] };
   }
 
+  /** The recording's values right now (channel name -> value), for the demo CAN traffic. */
+  values() {
+    const t = this.sample.t;
+    const now = t[0] + (((performance.now() - this.t0) / 1000) % this.duration);
+    let lo = 0, hi = t.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (t[mid] <= now) lo = mid; else hi = mid - 1; }
+    const out = {};
+    for (const [name, col] of this.sample.columns) out[name] = col[lo];
+    return out;
+  }
+
   _memory() {
     const t = this.sample.t;
     const now = t[0] + (((performance.now() - this.t0) / 1000) % this.duration);
@@ -160,6 +171,7 @@ class DemoSerialPort {
   }
 
   async close() {
+    this._stopBus();
     if (!this.isOpen) throw new DOMException("The port is already closed.", "InvalidStateError");
     if (this.readable?.locked || this.writable?.locked) throw new DOMException("Cannot close a port with locked streams.", "InvalidStateError");
     try { this.ctrl.close(); } catch { /* already closed or cancelled */ }
@@ -193,7 +205,7 @@ class DemoSerialPort {
         const data = new Uint8Array(this.inbuf.splice(0, this.pending.n));
         const kind = this.pending.kind;
         this.pending = null;
-        if (kind === "filter") this._out("arf6 0\r\n");
+        if (kind === "filter") this._out(`arf${this.pending0 || 6} 0\r\n`);
         else if (kind === "tx") this._transmit(data);
         continue;
       }
@@ -210,10 +222,76 @@ class DemoSerialPort {
     const parts = line.split(/\s+/);
     if (line.startsWith("ati")) this._out("ari Demo OpenPort - replaying a recording\r\n");
     else if (line.startsWith("atr")) this._out("arr 16 12450\r\n");
-    else if (line.startsWith("atf")) this.pending = { n: 3 * Number(parts[3]), kind: "filter" };
+    else if (line.startsWith("atf")) {
+      // a flow-control filter carries mask, pattern and flow-control id; pass/block filters only two
+      this.pending = { n: (Number(parts[1]) === 3 ? 3 : 2) * Number(parts[3]), kind: "filter" };
+      this.pending0 = Number(line[3]);
+    } else if (line.startsWith("ato5")) {
+      this._out("aro\r\n");
+      this._startBus();
+    } else if (line.startsWith("atc5")) {
+      this._stopBus();
+      this._out("aro\r\n");
+    }
     else if (line.startsWith("att")) this.pending = { n: Number(parts[1]), kind: "tx" };
     else if (/^at[aosc]/.test(line)) this._out("aro\r\n");
     // atz: no reply
+  }
+
+  // ---- demo CAN traffic: the IDs, rates and housekeeping bytes of a capture from the 2012 Forester's
+  // OBD port, carrying the replayed recording's values. Which byte carries what is made up for the demo.
+  _startBus() {
+    if (this.busTimer) return;
+    this.busTick = 0;
+    this.busPrev = {};
+    this.busTimer = setInterval(() => this._busTick(), 10);
+  }
+
+  _stopBus() {
+    clearInterval(this.busTimer);
+    this.busTimer = null;
+  }
+
+  _busTick() {
+    if (!this.isOpen || !this.connected) return this._stopBus();
+    const k = ++this.busTick, v = this.ecu.values();
+    const num = (name, d = 0) => (Number.isFinite(v[name]) ? v[name] : d);
+    const rpm = num("Engine Speed"), thr = num("Throttle Opening Angle"), spd = num("Vehicle Speed");
+    const load = num("Engine Load"), cool = num("Coolant Temperature", 80), brake = num("Brake Switch") >= 0.5;
+    const neutral = num("Neutral Position Switch Signal") >= 0.5, iat = num("Intake Air Temperature", 30);
+    const pressure = brake ? Math.min(60, (this.busPrev.press || 0) + 2) : Math.max(0, (this.busPrev.press || 0) - 4);
+    this.busPrev.press = pressure;
+    const c = k & 255, n4 = k & 15, noise = () => Math.round((Math.random() - 0.5) * 6);
+    const le16 = (x) => [x & 255, (x >> 8) & 255];
+    const sum = (b) => { b[7] = b.slice(0, 7).reduce((a, x) => a + x, 0) & 255; return b; };
+    const r = Math.round(rpm / 1.6), w = Math.round(spd * 17.6);
+    const frames = [
+      [0x002, 1, [0x0c, 0x80, (n4 << 4) | 0x04, 0, 0, 0, 0, 0x01]],
+      [0x070, 2, sum([0xf0 + noise(), 0x7f, 0, 0xff, 0x80 + noise(), 0x7f, n4, 0])],
+      [0x075, 2, sum([0, 0, 0, 0, 0, Math.abs(noise()), n4, 0])],
+      [0x410, 1, [Math.round(20 + thr * 0.6), 0, Math.round(34 + load * 0.4), 10, 0, ...le16(Math.max(0, 1120 - Math.round(load * 6))), 0xc4]],
+      [0x411, 1, [0, 0xff, 0x3f, 0, 0, 0, brake ? 0x1c : 0x0c, 0x04]],
+      [0x412, 1, [0, ...le16(r), ...le16(r), 22, 8, 2]],
+      [0x420, 1, [0, neutral ? 0x88 : 0x77, 0x41, 0x40, Math.max(0, 137 - Math.round(thr * 4)), 0x40, 0xfa, 0x80]],
+      [0x421, 1, [0xff, 0, 0xff, c, 0, 0xb0, 0, 0]],
+      [0x422, 1, [0, 0, neutral ? 7 : 6, 0xff, 0x7f, 0x58, 0, 0x7d]],
+      [0x501, 2, [0, 0, 0, 0xff, 0, c, 0, 0]],
+      [0x511, 2, [0xfc, 0xff, 0, 0, Math.round(pressure), 1, 0, 0]],
+      [0x512, 2, [0, 0xf0, 0, 0, brake ? 0x90 : 0x80, c, 0xff, 0x7f]],
+      [0x513, 2, [...le16(w), ...le16(w + 2), ...le16(w + 1), ...le16(w + 3)]],
+      [0x514, 2, [brake ? 8 : 0, 0, 0x8c, 0, 0xc8, 117, (k * 2) & 15, 0x80]],
+      [0x576, 2, sum([0, 0, 0, 0, 10 + Math.abs(noise()), 25 + noise(), 0x10 | n4, 0])],
+      [0x600, 5, [0, 128 + noise() * 8, 2, Math.round(cool + 40), c, 0x0e, 1, Math.round(iat + 40)]],
+      [0x601, 1, [0, 0xde, 0, Math.round(70 + thr * 1.2), 0, 0x29, 0, 0]],
+      [0x620, 2, [0x20, 0, neutral ? 7 : 3, 0, 0, 0, 0, 0]],
+    ];
+    const stamp = Math.round(performance.now() * 1000) >>> 0;
+    for (const [id, every, data] of frames) {
+      if (k % every) continue;
+      const b = data.map((x) => Math.max(0, Math.min(255, Math.round(x))));
+      this._out(new Uint8Array([0x61, 0x72, 0x35, 17, 0x00, stamp >>> 24, (stamp >> 16) & 255, (stamp >> 8) & 255, stamp & 255,
+                                0, 0, id >> 8, id & 255, ...b]));
+    }
   }
 
   _transmit(data) {

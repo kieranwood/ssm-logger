@@ -8,6 +8,8 @@ const OP = {
   CH_ISO15765: 0x36,                 // "6"
   TX_ISO15765_FRAME_PAD: 0x40,
   FLOW_CONTROL_FILTER: 3,
+  CAN: 5, CH_CAN: 0x35,              // raw CAN frames, listen-only (as openport.connect_raw_can)
+  CAN_ID_BOTH: 0x800, PASS_FILTER: 1,
   CFG: { LOOPBACK: 0x03, ISO15765_BS: 0x1e, ISO15765_STMIN: 0x1f, BS_TX: 0x22, STMIN_TX: 0x23,
          ISO15765_WFT_MAX: 0x25 },
   NORM_MSG: 0x00, RX_MSG_END_IND: 0x40, EXT_ADDR_MSG_END_IND: 0x44,
@@ -54,6 +56,8 @@ class OpenPort {
     this.closed = false;
     this.portClosed = false;     // the serial port itself was closed (close() can fail)
     this.readError = null;
+    this.rawOpen = false;
+    this.onCanFrame = null;      // (id, data: Uint8Array, deviceMicros) for each raw CAN frame
   }
 
   // ---------------------------------------------------------------- low level
@@ -101,7 +105,15 @@ class OpenPort {
         if (buf.length < 4) break;
         const total = buf[3] + 4;
         if (buf.length < total) break;
-        this._handlePacket(buf[4], buf.slice(9, total));
+        if (ch === OP.CH_CAN) {
+          if (buf[4] === OP.NORM_MSG && total >= 13 && this.onCanFrame) {
+            const stamp = ((buf[5] << 24) | (buf[6] << 16) | (buf[7] << 8) | buf[8]) >>> 0;
+            const id = ((buf[9] << 24) | (buf[10] << 16) | (buf[11] << 8) | buf[12]) >>> 0;
+            this.onCanFrame(id, buf.slice(13, total), stamp);
+          }
+        } else {
+          this._handlePacket(buf[4], buf.slice(9, total));
+        }
         this.buf = buf.slice(total);
         continue;
       }
@@ -191,6 +203,29 @@ class OpenPort {
     this.ecuId = ecuId;
   }
 
+  /** Open a raw CAN channel with a pass-all filter, for listening: nothing is transmitted on it
+   *  (the adapter still acknowledges frames, as every CAN node does). Frames go to onCanFrame. */
+  async connectRawCan(baud = 500000) {
+    const P = OP.CAN;
+    try {
+      await this.command(`ato${P} ${OP.CAN_ID_BOTH} ${baud} 0\r\n`);
+    } catch (e) {
+      if (/channel in use|device in use/i.test(e.message)) throw e;
+      await this.command(`ato${P} 0 ${baud} 0\r\n`);          // 11-bit identifiers only
+    }
+    this.rawOpen = true;
+    await this.command(`ats${P} ${OP.CFG.LOOPBACK} 0\r\n`);
+    const zero = new Uint8Array(8);                               // mask 0, pattern 0: everything passes
+    await this.command(`atf${P} ${OP.PASS_FILTER} 0 4\r\n`, { expect: "arf", payload: zero });
+  }
+
+  async closeRawCan() {
+    if (!this.rawOpen) return;
+    this.rawOpen = false;
+    this.onCanFrame = null;
+    await this.command(`atc${OP.CAN}\r\n`, { timeoutMs: 800 });
+  }
+
   async send(payload) {
     const data = concatBytes(u32be(this.testerId), payload);
     await this._write(concatBytes(encodeText(`att${OP.ISO15765} ${data.length} ${OP.TX_ISO15765_FRAME_PAD}\r\n`), data));
@@ -226,6 +261,9 @@ class OpenPort {
     if (this.portClosed) return true;
     const limit = (p, ms) => Promise.race([p, sleepMs(ms)]);   // a dead cable mustn't hang us
     if (!this.closed && !this.readError && this.writer) {
+      if (this.rawOpen) {
+        try { await limit(this.command(`atc${OP.CAN}\r\n`, { timeoutMs: 500 }), 800); } catch { /* ignore */ }
+      }
       if (this.channelOpen) {
         try { await limit(this.command(`atc${OP.ISO15765}\r\n`, { timeoutMs: 500 }), 800); } catch { /* ignore */ }
       }

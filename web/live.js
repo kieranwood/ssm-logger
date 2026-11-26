@@ -68,6 +68,24 @@ class LiveSession {
     this.cableGone = false;        // unplugged: wait for it to come back instead of retrying
     this.wakeCable = null;
     this.lastOp = null;            // the last OpenPort, closed again before each retry
+    this.canCb = null;             // (t, id, data) while listening to raw CAN, on the samples' clock
+  }
+
+  /** Listen to the raw CAN traffic alongside the logging (if the adapter allows a second channel).
+   *  Resolves once listening; rejects with the adapter's reason if it can't. */
+  startCan(cb) {
+    this.canCb = cb;
+    return this.runJob((request, op) => this._openCan(op));
+  }
+
+  stopCan() {
+    this.canCb = null;
+    return this.runJob((request, op) => op.closeRawCan()).catch(() => {});
+  }
+
+  async _openCan(op) {
+    await op.connectRawCan();
+    op.onCanFrame = (id, data) => this.canCb?.((performance.now() - this.t0) / 1000, id, data);
   }
 
   /** Is this port the cable we were using (after it was unplugged and plugged back in)? */
@@ -103,7 +121,7 @@ class LiveSession {
         // undefined (not null) so Python sees None when the ECU doesn't answer
         return (p.length ? op.request(p, timeout * 1000) : op.recv(timeout * 1000)).then((r) => r ?? undefined);
       };
-      try { resolve(await fn(request)); } catch (e) { reject(e); }
+      try { resolve(await fn(request, op)); } catch (e) { reject(e); }
     }
   }
 
@@ -194,6 +212,9 @@ class LiveSession {
         continue;
       }
       this.op = op;
+      if (this.canCb) {                     // listening before the reconnect: listen again
+        try { await this._openCan(op); } catch (e) { this.canCb?.(null, null, null, e.message); }
+      }
       this.onStatus("Logging");
       let failures = 0, count = 0, tRate = performance.now();
       try {

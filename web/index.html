@@ -82,6 +82,9 @@
         <button data-act="engine" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M9 2v3M15 2v3M9 19v3M15 19v3M19 9h3M19 15h3M2 9h3M2 15h3"></path></svg></span><span class="mi-text"><b>Engine profile…</b><small id="profile-current">Automatic</small></span></button>
         <button data-act="timing" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 12V3"></path><path d="M12 12l6 5"></path></svg></span><span class="mi-text"><b>Engine timing…</b><small>Valves, injection and spark over one 720° cycle (calculated)</small></span></button>
         <button data-act="boxer" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="9" width="6" height="6" rx="1"></rect><rect x="16" y="9" width="6" height="6" rx="1"></rect><path d="M8 12h8"></path><circle cx="12" cy="12" r="2"></circle></svg></span><span class="mi-text"><b>Engine animation…</b><small>The boxer engine moving through its cycle, with misfire counts</small></span></button>
+        <div class="menu-sep"></div>
+        <div class="menu-section">CAN bus</div>
+        <button data-act="can" role="menuitem"><span class="mi-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10h18M3 14h18"></path><path d="M7 10V5M12 10V6M17 10V4M9 14v5M15 14v4"></path></svg></span><span class="mi-text"><b>CAN bus…</b><small>Watch the modules' traffic, find signals, export a DBC</small></span></button>
       </div>
     </span>
     <input id="compare-file" type="file" accept=".csv,text/csv" hidden>
@@ -511,6 +514,33 @@
   </div>
 </dialog>
 
+<dialog id="can-dialog" class="td can" aria-labelledby="can-title">
+  <header class="fc-head td-head">
+    <div class="fh-text">
+      <div class="td-title-row"><h2 id="can-title">CAN bus</h2>
+        <span id="can-bus-pill" class="can-pill ok num"></span><span id="can-src-pill" class="td-pill"></span></div>
+      <p id="can-lead" class="ep-lead"></p>
+    </div>
+    <nav id="can-nav" class="seg-group" aria-label="CAN views">
+      <button class="seg" type="button" data-view="monitor" aria-pressed="true">Monitor</button>
+      <button class="seg" type="button" data-view="finder" aria-pressed="false">Signal finder</button>
+      <button class="seg" type="button" data-view="network" aria-pressed="false">Network</button>
+      <button class="seg" type="button" data-view="signals" aria-pressed="false">Signals</button>
+    </nav>
+    <button id="can-x" class="btn icon-btn ghost" aria-label="Close CAN bus"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </header>
+  <div class="can-bar">
+    <button id="can-listen" class="btn">Listen</button>
+    <button id="can-pause" class="btn" hidden>Pause</button>
+    <label class="btn" for="can-file">Open capture…</label>
+    <input id="can-file" type="file" accept=".csv,text/csv" multiple hidden>
+    <button id="can-save" class="btn" hidden>Save capture</button>
+    <span class="spacer"></span>
+    <span id="can-count" class="num can-count"></span>
+  </div>
+  <div id="can-body" class="can-body"></div>
+</dialog>
+
 <dialog id="report-dialog">
   <div class="dialog-head"><b>Report</b></div>
   <p class="sub">One HTML page to share or print (open it and print to PDF if you need one).</p>
@@ -538,5 +568,6 @@
 <script src="timing.js?v=dev"></script>
 <script src="boxer.js?v=dev"></script>
 <script src="app.js?v=dev"></script>
+<script src="can.js?v=dev"></script>
 </body>
 </html>

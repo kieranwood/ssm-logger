@@ -2396,6 +2396,7 @@ $("tools-menu").addEventListener("click", (e) => {
   else if (act === "engine") openEngineDialog();
   else if (act === "timing") openTiming();
   else if (act === "boxer") openBoxer();
+  else if (act === "can") CanBus.open();
 });
 // ------------------------------------------------------------------ gauge view (gauges.py, gauges.js)
 

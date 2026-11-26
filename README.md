@@ -82,6 +82,11 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   order, as rows or a wheel - intake and exhaust valve windows from the engine profile, shifted by the
   logged intake cam advance (Intake VVT Advance Angle), the spark from the ignition timing and the
   injection length from the injector pulse, plus injector duty. Calculated, not measured.
+- **CAN bus** (website, Tools ▸ CAN bus…): the traffic between the car's modules, read listen-only -
+  live while logging (if the OpenPort allows a second channel) or from a `probe.py --listen` capture and
+  its `_ssm.csv`. A monitor of every message (live table, bit activity, traffic timeline), a signal finder
+  that compares picked bits with a logged channel and ranks every field on the bus, a map of which
+  module sends what (your assignments), and the signals found so far, exported or imported as a DBC file.
 - **Engine animation** (website, Tools ▸ Engine animation…): a schematic of the boxer engine from above,
   pistons, valves, cams, spark and injection moving through the 1-3-2-4 cycle on the same calculated
   timing, slowed right down, with a crank-angle scrubber. Misfire counts come from the ECU's roughness

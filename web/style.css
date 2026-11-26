@@ -1255,6 +1255,177 @@ dialog.td[open] { display: flex; flex-direction: column; }
 .bx-key i.spark { width: 12px; height: 12px; border-radius: 50%; margin: 0 5px; background: var(--t-spark); }
 .bx-key i.burn { height: 12px; background: #b5561a; }
 .bx-key i.mis { height: 12px; border: 2px solid var(--g-danger); box-sizing: border-box; }
+/* CAN bus window (can.js) */
+dialog.can .td-head { align-items: flex-start; }
+.can-pill { height: 26px; padding: 0 10px; border-radius: 999px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--ok-tint); color: var(--ok); }
+.can-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.can-pill[hidden], .td-pill[hidden] { display: none; }
+.can-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 14px 24px 0; }
+.can-bar [hidden] { display: none; }
+.can-count { font-size: 12px; color: var(--muted); }
+.can-body { flex: 1 1 auto; overflow-y: auto; padding: 16px 24px 24px; display: flex; flex-direction: column; gap: 16px; }
+.can-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.can-note { margin: 0; font-size: 13px; color: var(--text-3); line-height: 1.5; }
+.can-note.pad { padding: 10px 4px; }
+.can-lbl { font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.can-panel .id, .can-li .id, .can-best .id, .can-assign .id { color: var(--accent); font-weight: 600; }
+.can-empty { max-width: 640px; margin: 40px auto; text-align: center; color: var(--text-3); line-height: 1.6; }
+.can-empty h3 { margin: 0 0 8px; color: var(--text); }
+.can-empty code { font-family: var(--mono); font-size: 12px; background: var(--raised); padding: 1px 5px; border-radius: 5px; }
+.can-err { padding: 12px 14px; border-radius: 12px; background: var(--warning-tint); color: var(--warning-text); text-align: left; }
+.can-sec-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.can-sec-head h3 { margin: 0 auto 0 0; font-size: 16px; font-weight: 600; }
+.can-sec-head .field { max-width: 280px; }
+/* monitor */
+.can-monitor { display: flex; flex-direction: column; gap: 12px; }
+.can-tabs { align-self: flex-start; }
+.can-row { display: grid; grid-template-columns: 96px minmax(120px, 1fr) 44px 64px minmax(300px, 460px) 90px; gap: 12px; align-items: center;
+  min-height: 42px; padding: 0 10px; border: 0; border-top: 1px solid var(--divider); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.can-row:hover { background: var(--raised); }
+.can-row.can-head { cursor: default; border-top: 0; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); min-height: 30px; }
+.can-row.can-head:hover { background: none; }
+.can-row .lab { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.can-row .lab.dim { color: var(--muted); }
+.can-row > .num { font-size: 13px; color: var(--text-3); }
+.can-row .bytes { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
+.can-row .byte { height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 13px; background: var(--field); transition: background 0.35s, color 0.35s; }
+.can-row .byte.zero { color: var(--muted); opacity: 0.7; }
+.can-row .byte.none { background: none; }
+.can-row .byte.flash { background: var(--warning-tint); color: var(--g-warn); }
+.can-row .act { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+.can-row .act .bar, .can-best .bar, .can-node .bar { position: relative; flex: 1 1 auto; height: 6px; border-radius: 3px; background: var(--g-track); display: block; }
+.can-row .act .bar i, .can-best .bar i, .can-node .bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--accent-fill); }
+.can-bits-row { display: grid; grid-template-columns: 96px repeat(8, minmax(0, 1fr)); gap: 6px; align-items: center; }
+.can-bits-row.head span { font-size: 11px; color: var(--muted); text-align: center; }
+.can-bits { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 2px; }
+.can-bits i { height: 20px; border-radius: 3px; background: var(--field); }
+.can-bits i.h1 { background: color-mix(in srgb, var(--accent-fill) 22%, var(--field)); }
+.can-bits i.h2 { background: color-mix(in srgb, var(--accent-fill) 50%, var(--field)); }
+.can-bits i.h3 { background: var(--accent-fill); }
+.can-bits i.h4 { background: var(--t-spark); }
+.can-lane { display: grid; grid-template-columns: 96px 1fr 64px; gap: 12px; align-items: center; }
+.can-lane svg { width: 100%; height: 24px; display: block; background: var(--field); border-radius: 6px; }
+.can-lane path { stroke: var(--accent-fill); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.can-lane > .num:last-child { font-size: 12px; color: var(--muted); text-align: right; }
+.can-lane.load svg { height: 60px; }
+.can-lane.load polyline { fill: none; stroke: var(--accent-fill); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.can-lane.load line { stroke: var(--g-warn); stroke-dasharray: 6 6; vector-effect: non-scaling-stroke; }
+/* finder */
+.can-finder { display: flex; gap: 16px; align-items: flex-start; }
+.can-list { width: 240px; flex: none; padding: 8px; gap: 2px; max-height: 70vh; overflow-y: auto; }
+.can-list .can-lbl { padding: 6px 8px; }
+.can-li { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; min-height: 40px; padding: 0 10px; border: 0; border-radius: 10px;
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.can-li:hover { background: var(--raised); }
+.can-li[aria-pressed="true"] { background: var(--raised); box-shadow: inset 3px 0 0 var(--accent-fill); }
+.can-li .sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.can-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.can-bitgrid { display: grid; grid-template-columns: 60px repeat(8, minmax(0, 1fr)); gap: 4px 6px; align-items: center; }
+.can-bitgrid .hdr { font-size: 11px; color: var(--muted); text-align: center; }
+.can-bitgrid .bit { height: 32px; border: 0; border-radius: 6px; cursor: pointer; font: 500 11px var(--mono); background: var(--field); color: var(--muted); }
+.can-bitgrid .bit.one { background: var(--raised); color: var(--text); }
+.can-bitgrid .bit.sel { background: color-mix(in srgb, var(--accent-fill) 30%, var(--field)); color: var(--text); }
+.can-bitgrid .bit.first { background: var(--accent-fill); color: #06222b; box-shadow: 0 0 0 2px var(--accent); }
+.can-bitgrid .bit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.can-info { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13px; color: var(--text-3); }
+.can-info b { color: var(--text); }
+.can-cmp { display: flex; flex-wrap: wrap; gap: 16px; align-items: stretch; }
+.can-plot { flex: 1 1 480px; min-width: 0; }
+.can-plot svg { width: 100%; height: 200px; display: block; background: var(--field); border-radius: 10px; }
+.can-plot polyline { fill: none; stroke-width: 2; vector-effect: non-scaling-stroke; }
+.can-plot polyline.ref { stroke: var(--muted); stroke-dasharray: 6 5; }
+.can-plot polyline.cand { stroke: var(--muted); stroke-width: 2.5; }
+.can-plot polyline.cand.ok { stroke: var(--ok); }
+.can-plot polyline.cand.warn { stroke: var(--g-warn); }
+.can-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.can-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.can-legend i { width: 18px; height: 0; border-top: 2px dashed var(--muted); }
+.can-legend i.cand { border-top: 3px solid var(--muted); }
+.can-legend i.cand.ok { border-color: var(--ok); }
+.can-legend i.cand.warn { border-color: var(--g-warn); }
+.can-match { flex: 0 1 260px; min-width: 220px; display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 14px; background: var(--field); border: 1px solid var(--border); }
+.can-match.ok { background: var(--ok-tint); border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); }
+.can-match.warn { background: var(--warning-tint); border-color: var(--warning-border); }
+.can-match > b { font-size: 40px; font-weight: 500; line-height: 1; }
+.can-match.ok > b, .can-match.ok .can-lbl { color: var(--ok); }
+.can-match.warn > b, .can-match.warn .can-lbl { color: var(--g-warn); }
+.can-match .note { font-size: 12px; color: var(--muted); }
+.can-match .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; padding-top: 10px; border-top: 1px solid var(--divider); }
+.can-match .kv span:nth-child(odd) { color: var(--muted); }
+.can-best { display: grid; grid-template-columns: 96px 150px 1fr 60px; gap: 14px; align-items: center; min-height: 42px; padding: 0 10px; border: 0;
+  border-top: 1px solid var(--divider); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.can-best:hover { background: var(--raised); }
+.can-best > .num { font-size: 13px; color: var(--text-3); }
+.can-best .r { text-align: right; font-size: 14px; }
+.can-best .ok, .can-best .r.ok { color: var(--ok); }
+.can-best .bar i.ok { background: var(--ok); }
+.can-best .bar i.warn { background: var(--g-warn); }
+.can-best .r.warn { color: var(--g-warn); }
+/* network */
+.can-net { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.can-map { flex: 999 1 560px; padding: 20px; gap: 0; }
+.can-nodes { display: flex; flex-wrap: wrap; justify-content: space-around; gap: 14px; position: relative; }
+.can-nodes.top { padding-bottom: 28px; }
+.can-nodes.bottom { padding-top: 28px; }
+.can-node { position: relative; width: 190px; padding: 12px 14px; border-radius: 14px; border: 1.5px dashed var(--muted); background: var(--field); color: var(--text);
+  font: inherit; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+.can-node::after { content: ""; position: absolute; left: 50%; width: 2px; background: var(--border); }
+.can-nodes.top .can-node::after { top: 100%; height: 29px; }
+.can-nodes.bottom .can-node::after { bottom: 100%; height: 29px; }
+.can-node.confirmed { border-style: solid; border-color: var(--ok); }
+.can-node.likely { border-color: var(--g-warn); }
+.can-node[aria-pressed="true"] { background: var(--raised); box-shadow: 0 0 0 2px var(--accent-fill); }
+.can-node b { font-size: 14px; }
+.can-node .num { font-size: 12px; color: var(--muted); }
+.can-node small { font-size: 11px; color: var(--muted); }
+.can-node.confirmed small { color: var(--ok); }
+.can-node.likely small { color: var(--g-warn); }
+.can-busline { position: relative; display: grid; grid-template-columns: 56px 1fr 56px; align-items: center; height: 34px; }
+.can-busline i { grid-column: 2; grid-row: 1; height: 3px; border-radius: 2px; }
+.can-busline i.h { background: var(--accent-fill); align-self: start; margin-top: 10px; }
+.can-busline i.l { background: color-mix(in srgb, var(--accent-fill) 50%, var(--field)); align-self: end; margin-bottom: 10px; }
+.can-busline span { font-size: 11px; color: var(--muted); }
+.can-busline span:last-child { text-align: right; }
+.can-side { flex: 1 1 320px; max-width: 380px; display: flex; flex-direction: column; gap: 14px; }
+.can-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.can-kpis div { padding: 10px; border-radius: 10px; background: var(--field); display: flex; flex-direction: column; }
+.can-kpis b { font-size: 20px; font-weight: 500; }
+.can-kpis span { font-size: 11px; color: var(--muted); }
+.can-assign { display: grid; grid-template-columns: 70px 1fr; gap: 6px 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--divider); }
+.can-assign .lab { font-size: 12px; color: var(--muted); }
+.can-assign .field { grid-column: 1 / -1; height: 36px; }
+.can-tip { margin: 0; padding: 12px; border-radius: 12px; background: var(--field); font-size: 12px; line-height: 1.5; color: var(--text-3); }
+.can-howkey span { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-3); }
+.can-howkey i { width: 18px; height: 12px; border-radius: 3px; border: 1.5px dashed var(--muted); flex: none; }
+.can-howkey i.confirmed { border-style: solid; border-color: var(--ok); }
+.can-howkey i.likely { border-color: var(--g-warn); }
+/* signals */
+.can-sigbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.can-banner { padding: 12px 16px; border-radius: 12px; background: var(--warning-tint); border: 1px solid var(--warning-border); font-size: 13px; color: var(--warning-text); }
+.can-sigs { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.can-sigtable { flex: 999 1 640px; padding: 8px; gap: 0; overflow-x: auto; }
+.can-sig { display: grid; grid-template-columns: 34px minmax(130px, 1.4fr) 70px 66px 40px 52px 64px 56px 48px 90px 96px 36px; gap: 8px; align-items: center;
+  min-height: 46px; padding: 0 8px; border-top: 1px solid var(--divider); font-size: 13px; min-width: 860px; }
+.can-sig.head { border-top: 0; min-height: 30px; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.can-sig.conflict { background: var(--warning-tint); }
+.can-sig .chk { display: flex; align-items: center; justify-content: center; min-height: 44px; cursor: pointer; }
+.can-sig .chk input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+.can-sig .nm { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.can-sig .nm span { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.can-sig .nm small { font-size: 11px; color: var(--g-warn); }
+.can-sig .chip { height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-self: start; white-space: nowrap; background: var(--raised); color: var(--text-2); }
+.can-sig .chip.found { background: var(--ok-tint); color: var(--ok); }
+.can-sig .chip.imported { background: var(--info-tint); color: var(--info-c); }
+.can-dbc { flex: 1 1 380px; max-width: 460px; }
+.can-dbc .can-sec-head h3 { font-size: 15px; }
+.can-dbc pre { margin: 0; padding: 14px; border-radius: 12px; background: var(--field); border: 1px solid var(--border); font-size: 11.5px; line-height: 1.6;
+  color: var(--text-2); white-space: pre; overflow: auto; max-height: 60vh; }
+@media (max-width: 800px) {
+  .can-finder { flex-direction: column; }
+  .can-list { width: auto; max-height: 200px; }
+  .can-body, .can-bar { padding-left: 16px; padding-right: 16px; }
+}
 table.rules { width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 13px; }
 table.rules th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 0 6px; }
 table.rules td { padding: 0 6px; }
