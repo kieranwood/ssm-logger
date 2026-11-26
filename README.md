@@ -157,6 +157,7 @@ or pass `--defs` to `logger.py`. An existing RomRaider checkout at
 .venv/bin/python analyse.py logs/ssm_....csv   # --engine na25|na20|turbo (default: auto)
 .venv/bin/python probe.py [--debug]         # minimal connection test
 .venv/bin/python probe.py --listen [SECONDS] # listen-only: what's on the CAN bus at the OBD port
+.venv/bin/python probe.py --listen 30 --with-ssm   # ...plus known SSM values, matched to CAN bytes
 ```
 
 ## Platforms

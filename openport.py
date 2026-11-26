@@ -260,6 +260,43 @@ class OpenPort:
         frames, self._frames = self._frames, []
         return frames
 
+    def take_frames(self) -> list[tuple[float, int, int, bytes]]:
+        """The raw CAN frames received since the last call (while listening or making requests)."""
+        frames, self._frames = self._frames, []
+        return frames
+
+    def close_iso15765(self) -> None:
+        if self._channel_open:
+            self.command(f"atc{ISO15765}\r\n", timeout=1.0)
+            self._channel_open = False
+
+    def raw_request(self, payload: bytes, timeout: float = 0.5, tx_id: int = 0x7E0, rx_id: int = 0x7E8) -> bytes | None:
+        """A diagnostic request sent as one plain CAN frame on the raw channel, for when the adapter can't
+        keep the ISO15765 channel open beside it. Only single-frame messages (up to 7 bytes each way) -
+        enough for SSM reads of one address. The frames go into the capture like any others."""
+        if len(payload) > 7:
+            raise ValueError("raw_request handles single-frame messages only")
+        frame = bytes([len(payload)]) + payload
+        frame += bytes(8 - len(frame))                                # pad to 8 bytes
+        start = len(self._frames)
+        data = tx_id.to_bytes(4, "big") + frame
+        self._write(f"att{CAN} {len(data)} 0\r\n".encode() + data)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for _, _, cid, d in self._frames[start:]:
+                if cid == rx_id and d:
+                    pci = d[0]
+                    return bytes(d[1:1 + (pci & 0x0F)]) if pci >> 4 == 0 else None   # first frame: not handled
+            start = len(self._frames)
+            item = self._next_item()
+            if item is None:
+                self._fill()
+            elif item[0] == "pkt":
+                self._handle_packet(*item[1:])
+            elif item[1].startswith("are"):
+                raise OpenPortError(_describe_error(item[1]))
+        return None
+
     def send(self, payload: bytes) -> None:
         data = self.tester_id.to_bytes(4, "big") + payload
         self._write(f"att{ISO15765} {len(data)} {TX_ISO15765_FRAME_PAD}\r\n".encode() + data)
