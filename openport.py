@@ -27,6 +27,10 @@ from serial.tools import list_ports
 
 ISO15765 = 6
 CH_ISO15765 = 0x30 + ISO15765          # channel byte in packets: ASCII '6'
+CAN = 5                                # raw CAN frames (listen-only use in probe.py)
+CH_CAN = 0x30 + CAN                    # ASCII '5'
+CAN_ID_BOTH = 0x800                    # J2534 connect flag: receive 11- and 29-bit identifiers
+PASS_FILTER = 1
 
 TX_ISO15765_FRAME_PAD = 0x40
 FLOW_CONTROL_FILTER = 3
@@ -105,6 +109,8 @@ class OpenPort:
         self._channel_open = False
         self._rx_parts = bytearray()
         self._rx_queue: list[tuple[int, bytes]] = []
+        self._raw_open = False
+        self._frames: list[tuple[float, int, int, bytes]] = []   # raw CAN: (host time, device us, id, data)
 
     # ------------------------------------------------------------------ low level
     def _log(self, direction: str, data: bytes) -> None:
@@ -126,7 +132,7 @@ class OpenPort:
     def _next_item(self):
         """Pop one complete item from the buffer.
 
-        Returns ("pkt", type, data) for binary bus packets, ("line", text) for
+        Returns ("pkt", type, data, channel, device timestamp) for binary bus packets, ("line", text) for
         text replies, or None if no complete item is buffered yet.
         """
         buf = self.buf
@@ -149,9 +155,10 @@ class OpenPort:
             if len(buf) < total:
                 return None
             ptype = buf[4]
+            stamp = int.from_bytes(buf[5:9], "big") if total >= 9 else 0
             data = bytes(buf[9:total])
             del buf[:total]
-            return ("pkt", ptype, data)
+            return ("pkt", ptype, data, ch, stamp)
         end = buf.find(b"\r\n")
         if end < 0:
             return None
@@ -159,7 +166,12 @@ class OpenPort:
         del buf[:end + 2]
         return ("line", line)
 
-    def _handle_packet(self, ptype: int, data: bytes) -> None:
+    def _handle_packet(self, ptype: int, data: bytes, ch: int = CH_ISO15765, stamp: int = 0) -> None:
+        if ch == CH_CAN:
+            # raw CAN: one complete frame per packet, 4-byte identifier then up to 8 data bytes
+            if ptype == NORM_MSG and len(data) >= 4:
+                self._frames.append((time.monotonic(), stamp, int.from_bytes(data[:4], "big"), data[4:]))
+            return
         if ptype in (NORM_MSG, RX_MSG_END_IND, EXT_ADDR_MSG_END_IND):
             # Long ISO-TP messages arrive in several packets; each one repeats
             # the 4-byte CAN id, which must only appear once in the message.
@@ -184,7 +196,7 @@ class OpenPort:
                 self._fill()
                 continue
             if item[0] == "pkt":
-                self._handle_packet(item[1], item[2])
+                self._handle_packet(*item[1:])
                 continue
             line = item[1]
             if line.startswith("are"):
@@ -221,6 +233,33 @@ class OpenPort:
         self.tester_id = tester_id
         self.ecu_id = ecu_id
 
+    def connect_raw_can(self, baud: int = 500000) -> None:
+        """Open a raw CAN channel with a pass-all filter, for listening only: nothing is ever
+        transmitted on it (the adapter still acknowledges frames, as every CAN node does)."""
+        try:
+            self.command(f"ato{CAN} {CAN_ID_BOTH} {baud} 0\r\n")
+        except OpenPortError:
+            self.command(f"ato{CAN} 0 {baud} 0\r\n")            # 11-bit identifiers only
+        self._raw_open = True
+        self.command(f"ats{CAN} {CFG_LOOPBACK} 0\r\n")
+        zero = b"\x00\x00\x00\x00"                               # mask 0: every identifier passes
+        self.command(f"atf{CAN} {PASS_FILTER} 0 4\r\n", expect="arf", payload=zero + zero)
+
+    def listen(self, seconds: float) -> list[tuple[float, int, int, bytes]]:
+        """Collect raw CAN frames for `seconds`: (host time, device timestamp us, id, data)."""
+        self._frames.clear()
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            item = self._next_item()
+            if item is None:
+                self._fill()
+            elif item[0] == "pkt":
+                self._handle_packet(*item[1:])
+            elif item[1].startswith("are"):
+                raise OpenPortError(_describe_error(item[1]))
+        frames, self._frames = self._frames, []
+        return frames
+
     def send(self, payload: bytes) -> None:
         data = self.tester_id.to_bytes(4, "big") + payload
         self._write(f"att{ISO15765} {len(data)} {TX_ISO15765_FRAME_PAD}\r\n".encode() + data)
@@ -236,7 +275,7 @@ class OpenPort:
             item = self._next_item()
             if item is not None:
                 if item[0] == "pkt":
-                    self._handle_packet(item[1], item[2])
+                    self._handle_packet(*item[1:])
                 elif item[1].startswith("are"):
                     raise OpenPortError(_describe_error(item[1]))
                 continue
@@ -251,11 +290,12 @@ class OpenPort:
 
     def close(self) -> None:
         try:
-            if self._channel_open:
-                try:
-                    self.command(f"atc{ISO15765}\r\n", timeout=1.0)
-                except OpenPortError:
-                    pass
+            for open_, proto in ((self._channel_open, ISO15765), (self._raw_open, CAN)):
+                if open_:
+                    try:
+                        self.command(f"atc{proto}\r\n", timeout=1.0)
+                    except OpenPortError:
+                        pass
             self._write(b"atz\r\n")
         finally:
             self.ser.close()

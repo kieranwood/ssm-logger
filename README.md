@@ -156,6 +156,7 @@ or pass `--defs` to `logger.py`. An existing RomRaider checkout at
 
 .venv/bin/python analyse.py logs/ssm_....csv   # --engine na25|na20|turbo (default: auto)
 .venv/bin/python probe.py [--debug]         # minimal connection test
+.venv/bin/python probe.py --listen [SECONDS] # listen-only: what's on the CAN bus at the OBD port
 ```
 
 ## Platforms
@@ -187,7 +188,7 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `gauge_view.py` | The desktop gauge view (Qt); the browser's is `web/gauges.js` |
 | `profiles.py` | Engine profiles: the engine-specific thresholds, and auto-detection |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
-| `probe.py` | Proof-of-concept connection test |
+| `probe.py` | Proof-of-concept connection test; `--listen` records the raw CAN traffic (transmits nothing) |
 | `web/` | Browser version: viewer, live logging over Web Serial (`openport.js`, `live.js`), demo ECU (`fake-ecu.js`), Python glue (`webapp.py`). Deployed to GitHub Pages by `.github/workflows/pages.yml`. Styling in `style.css` (dark and light themes); bundled fonts in `web/fonts/` (Space Grotesk and JetBrains Mono, both SIL Open Font License) |
 | `sdcard/logcfg.txt` | OpenPort standalone (SD card) logging config for the 2012 Forester |
 
