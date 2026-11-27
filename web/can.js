@@ -6,7 +6,30 @@
 "use strict";
 
 const CanBus = (() => {
-  const KEEP_S = 120;                       // live: seconds of frames kept per message
+  const KEEP_S = 120;                       // live: seconds of frames kept per message for the views
+  // live: every frame since Listen, kept compactly for Save capture (the views only keep KEEP_S)
+  const REC_MAX = 20 * 60 * 2500, CHUNK = 65536;  // about 20 minutes at this bus's ~2,000 frames/s
+  const rec = { n: 0, chunks: [] };
+  function recAdd(t, id, d) {
+    if (rec.n >= REC_MAX) return;
+    let c = rec.chunks[rec.chunks.length - 1];
+    if (!c || c.n === CHUNK) {
+      c = { n: 0, t: new Float64Array(CHUNK), id: new Uint32Array(CHUNK), len: new Uint8Array(CHUNK), d: new Uint8Array(CHUNK * 8) };
+      rec.chunks.push(c);
+    }
+    const k = c.n++, n = Math.min(8, d.length);
+    c.t[k] = t;
+    c.id[k] = id;
+    c.len[k] = n;
+    for (let i = 0; i < n; i++) c.d[k * 8 + i] = d[i];
+    rec.n++;
+  }
+  const recSpan = () => {
+    if (!rec.n) return 0;
+    const a = rec.chunks[0], b = rec.chunks[rec.chunks.length - 1];
+    return b.t[b.n - 1] - a.t[0];
+  };
+  const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   const SIG_KEY = "ssm-logger.canSignals", NODE_KEY = "ssm-logger.canNodes", MSG_KEY = "ssm-logger.canMessages";
   const MODULES = [
     ["ecm", "Engine control"], ["tcm", "Transmission"], ["abs", "ABS / stability"], ["steer", "Steering angle"],
@@ -63,6 +86,8 @@ const CanBus = (() => {
     st.source = source;
     st.srcName = name || "";
     st.loadHist = [];
+    rec.n = 0;
+    rec.chunks = [];
     st.best = null;
     st.bestKey = "";
     dash.t = null;
@@ -193,6 +218,7 @@ const CanBus = (() => {
     try {
       await s.startCan((t, id, data, err) => {
         if (err) { setStatus(`CAN listening stopped: ${err}`, true); return; }
+        recAdd(t, id, data);                         // recorded even while the views are paused
         if (!st.paused) addFrame(t, id, data);
       });
     } catch (e) {
@@ -241,11 +267,16 @@ const CanBus = (() => {
 
   function saveCapture() {
     const all = [];
-    for (const m of st.msgs.values()) m.t.forEach((t, i) => all.push([t, m.id, m.d[i]]));
-    all.sort((a, b) => a[0] - b[0]);
+    if (st.source === "live" && rec.n) {                // the whole session, not just what the views keep
+      for (const c of rec.chunks) for (let k = 0; k < c.n; k++) all.push([c.t[k], c.id[k], c.d.subarray(k * 8, k * 8 + c.len[k])]);
+    } else {
+      for (const m of st.msgs.values()) m.t.forEach((t, i) => all.push([t, m.id, m.d[i]]));
+      all.sort((a, b) => a[0] - b[0]);
+    }
     if (!all.length) return;
     const t0 = all[0][0];
-    const name = `can_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "").replace(/^(\d{8})/, "$1_")}`;
+    const now = new Date(), p2 = (x) => String(x).padStart(2, "0");   // local time, like probe.py's file names
+    const name = `can_${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}_${p2(now.getHours())}${p2(now.getMinutes())}${p2(now.getSeconds())}`;
     const csv = ["time_s,device_us,id,len,data", ...all.map(([t, id, d]) =>
       `${(t - t0).toFixed(4)},,${hx(id, 0)},${d.length},${[...d].map((b) => hx(b, 2)).join(" ")}`)].join("\n");
     download(new Blob([csv + "\n"], { type: "text/csv" }), `${name}.csv`);
@@ -288,7 +319,10 @@ const CanBus = (() => {
     $("can-save").hidden = st.source !== "live" || !st.msgs.size;
     let total = 0;
     for (const m of st.msgs.values()) total += m.t.length;
-    $("can-count").textContent = st.msgs.size ? `${st.msgs.size} IDs · ${total.toLocaleString("en")} frames${st.source === "live" ? ` (last ${KEEP_S} s kept)` : ""}` : "";
+    $("can-count").textContent = !st.msgs.size ? "" : st.source === "live"
+      ? `${st.msgs.size} IDs · recording ${mmss(recSpan())}${rec.n >= REC_MAX ? " (full: 20 min kept)" : ""} · views show the last ${KEEP_S / 60} min`
+      : `${st.msgs.size} IDs · ${total.toLocaleString("en")} frames`;
+    $("can-save").textContent = st.source === "live" && rec.n ? `Save capture (${mmss(recSpan())})` : "Save capture";
     for (const b of $("can-nav").children) b.setAttribute("aria-pressed", String(b.dataset.view === st.view));
     const body = $("can-body");
     if (!st.msgs.size && st.view !== "signals") {

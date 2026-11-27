@@ -105,6 +105,13 @@ class OpenPort {
         if (buf.length < 4) break;
         const total = buf[3] + 4;
         if (buf.length < total) break;
+        // another packet header inside this one means bytes were lost on the way and this length is
+        // wrong: drop the broken packet and pick up at that header (otherwise headers get read as frames)
+        let next = -1;
+        for (let k = 4; k < total && k + 3 < buf.length; k++) {
+          if (buf[k] === 0x61 && buf[k + 1] === 0x72 && (buf[k + 2] === 0x35 || buf[k + 2] === OP.CH_ISO15765) && buf[k + 3] <= 0x20) { next = k; break; }
+        }
+        if (next > 0) { this.buf = buf.slice(next); this.resyncs = (this.resyncs || 0) + 1; continue; }
         if (ch === OP.CH_CAN) {
           if (buf[4] === OP.NORM_MSG && total >= 13 && this.onCanFrame) {
             const stamp = ((buf[5] << 24) | (buf[6] << 16) | (buf[7] << 8) | buf[8]) >>> 0;

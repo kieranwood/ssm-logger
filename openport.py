@@ -154,6 +154,13 @@ class OpenPort:
             total = ln + 4
             if len(buf) < total:
                 return None
+            # another packet header inside this one means bytes were lost and this length is wrong:
+            # drop the broken packet and pick up at that header (otherwise headers get read as frames)
+            for k in range(4, min(total, len(buf) - 3)):
+                if buf[k] == 0x61 and buf[k + 1] == 0x72 and buf[k + 2] in (CH_CAN, CH_ISO15765) and buf[k + 3] <= 0x20:
+                    del buf[:k]
+                    self.resyncs = getattr(self, "resyncs", 0) + 1
+                    return self._next_item()
             ptype = buf[4]
             stamp = int.from_bytes(buf[5:9], "big") if total >= 9 else 0
             data = bytes(buf[9:total])

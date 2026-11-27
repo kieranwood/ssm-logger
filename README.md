@@ -84,7 +84,8 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   injection length from the injector pulse, plus injector duty. Calculated, not measured.
 - **CAN bus** (website, Tools ▸ CAN bus…): the traffic between the car's modules, read listen-only -
   live while logging (if the OpenPort allows a second channel) or from a `probe.py --listen` capture and
-  its `_ssm.csv`. A monitor of every message (live table, bit activity, traffic timeline), a signal finder
+  its `_ssm.csv`. While listening, **Save capture** saves the whole session (up to 20 minutes) and the logged
+  values beside it, ready to open again or to share. A monitor of every message (live table, bit activity, traffic timeline), a signal finder
   that compares picked bits with a logged channel and ranks every field on the bus, a map of which
   module sends what (your assignments), and the signals found so far, exported or imported as a DBC file.
   The signals worked out so far for the 2012 Forester are in [`can/forester-2012.dbc`](can/forester-2012.dbc),

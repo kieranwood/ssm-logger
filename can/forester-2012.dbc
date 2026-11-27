@@ -22,15 +22,20 @@ BO_ 117 MSG_75: 8 Vector__XXX
 
 BO_ 1040 MSG_410: 8 Vector__XXX
  SG_ EngineSpeed_410 : 40|16@1+ (1,0) [0|8000] "rpm" Vector__XXX
+ SG_ AcCompressor_410 : 58|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ PowerSteeringSw_410 : 59|1@1+ (1,0) [0|1] "" Vector__XXX
 
 BO_ 1041 MSG_411: 8 Vector__XXX
  SG_ BrakeSwitch_411 : 52|1@1+ (1,0) [0|1] "" Vector__XXX
 
 BO_ 1042 MSG_412: 8 Vector__XXX
- SG_ Throttle_412 : 40|8@1+ (0.413,0.18) [0|100] "%" Vector__XXX
+ SG_ Throttle_412 : 40|8@1+ (0.4147,0.17) [0|100] "%" Vector__XXX
+ SG_ AccelPedal_412 : 0|8@1+ (0.390625,0) [0|100] "%" Vector__XXX
+ SG_ EngineLoad_412 : 8|16@1+ (0.05,8.6) [0|200] "%" Vector__XXX
 
 BO_ 1056 MSG_420: 8 Vector__XXX
- SG_ GearState_420 : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ Gear_420 : 8|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ GearTarget_420 : 12|4@1+ (1,0) [0|15] "" Vector__XXX
 
 BO_ 1057 MSG_421: 8 Vector__XXX
  SG_ Counter_421 : 24|8@1+ (1,0) [0|255] "" Vector__XXX
@@ -46,12 +51,22 @@ BO_ 1297 MSG_511: 8 Vector__XXX
  SG_ BrakePressure_511 : 32|8@1+ (1,0) [0|255] "raw" Vector__XXX
 
 BO_ 1298 MSG_512: 8 Vector__XXX
+ SG_ VehicleSpeed_512 : 16|16@1+ (0.05625,0) [0|300] "km/h" Vector__XXX
  SG_ BrakeSwitch_512 : 36|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ Counter_512 : 40|8@1+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 1299 MSG_513: 8 Vector__XXX
+ SG_ WheelSpeedA_513 : 0|16@1+ (0.05625,0) [0|300] "km/h" Vector__XXX
+ SG_ WheelSpeedB_513 : 16|16@1+ (0.05625,0) [0|300] "km/h" Vector__XXX
+ SG_ WheelSpeedC_513 : 32|16@1+ (0.05625,0) [0|300] "km/h" Vector__XXX
+ SG_ WheelSpeedD_513 : 48|16@1+ (0.05625,0) [0|300] "km/h" Vector__XXX
 
 BO_ 1300 MSG_514: 8 Vector__XXX
+ SG_ FuelLevel_514 : 16|8@1+ (1,0) [0|255] "raw" Vector__XXX
+ SG_ RearDefog_514 : 24|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ LightsA_514 : 25|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ LightsB_514 : 26|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Wiper_514 : 30|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ BrakeSwitch_514 : 3|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ Counter_514 : 48|4@1+ (1,0) [0|15] "" Vector__XXX
 
@@ -62,33 +77,38 @@ BO_ 1398 MSG_576: 8 Vector__XXX
 BO_ 1536 MSG_600: 8 Vector__XXX
  SG_ CoolantTemp_600 : 24|8@1+ (1,-40) [-40|215] "degC" Vector__XXX
  SG_ Counter_600 : 32|8@1+ (1,0) [0|255] "" Vector__XXX
- SG_ IntakeAirTemp_600 : 56|8@1+ (1,-40) [-40|215] "degC" Vector__XXX
+ SG_ TransFluidTemp_600 : 56|8@1+ (1,-40) [-40|215] "degC" Vector__XXX
+ SG_ Blower_600 : 48|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ MassAirFlow_600 : 8|16@1+ (0.0108,0.34) [0|300] "g/s" Vector__XXX
 
 BO_ 1537 MSG_601: 8 Vector__XXX
- SG_ ManifoldPressure_601 : 24|8@1+ (0.0582,1.93) [0|30] "psi" Vector__XXX
+ SG_ ManifoldPressure_601 : 24|8@1+ (0.0579,1.945) [0|30] "psi" Vector__XXX
+ SG_ AtmosPressure_601 : 8|8@1+ (0.0579,1.945) [0|30] "psi" Vector__XXX
+ SG_ AccelPedal_601 : 32|8@1+ (0.390625,0) [0|100] "%" Vector__XXX
 
 BO_ 1568 MSG_620: 8 Vector__XXX
- SG_ GearSelector_620 : 16|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ InPark_620 : 18|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ DayFlag_620 : 17|1@1+ (1,0) [0|1] "" Vector__XXX
 
 CM_ "2012 Subaru Forester (SH, FB25, auto), CAN traffic at the OBD port, 500 kbit/s. Worked out by watching captures (logs/can_*.csv, probe.py --listen) while doing known things; not official Subaru definitions. Import in the website under Tools > CAN bus > Signals, keep identifying, export and save back over this file.";
 CM_ BO_ 2 "Steering angle (SteeringAngle_002). The 2016 WRX uses the same bytes (afreiday/2016-wrx-can-ids).";
 CM_ BO_ 112 "Values sitting just either side of 0x8000 with sensor-like noise in bytes 0-1 and 4-5 while parked: possibly yaw rate or acceleration. Byte 1 flicked between 0x7F and 0x80 while the wheel was turned on 27 Nov. Unconfirmed.";
-CM_ BO_ 1040 "Engine group. Bytes 5-6 are engine speed (confirmed). Bytes 0 and 2 rose with load: unidentified.";
-CM_ BO_ 1042 "Engine group. Byte 5 tracks throttle opening (likely). Bytes 1-2 (repeated in 3-4) rose with load in Drive: not engine speed (that's 0x410); a load or torque figure, unconfirmed.";
-CM_ BO_ 1299 "All zeros while parked: would fit wheel speeds. Check on a slow drive.";
-CM_ BO_ 1536 "Coolant temperature in byte 3 (confirmed), intake air temperature likely in byte 7.";
-CM_ BO_ 1537 "Manifold pressure in byte 3 (likely). Byte 1 stays at 221, the same as byte 3 with the engine off: possibly atmospheric pressure.";
-CM_ BO_ 1058 "Transmission lever. Byte 0 went 0x00 to 0x01 as the lever entered the manual gate and back as it left (27 Nov), but was also 0x45 at key-on before the engine started, so it is not a clean flag.";
+CM_ BO_ 1040 "Engine group. Bytes 5-6 engine speed, byte 7 bit 2 A/C compressor, bit 3 power steering switch (confirmed / likely). Byte 7 bit 5 went off at 87.8 s on the 27 Nov drive (warm-up?). Byte 2 followed injector pulse width (r = 0.97).";
+CM_ BO_ 1042 "Engine group. Byte 0 accelerator pedal, bytes 1-2 (repeated in 3-4) engine load, byte 5 throttle.";
+CM_ BO_ 1299 "Wheel speeds (four 16-bit values). Confirmed on the 27 Nov drive.";
+CM_ BO_ 1536 "Coolant temperature (byte 3), blower (byte 6), probably transmission fluid temperature (byte 7), mass air flow (bytes 1-2).";
+CM_ BO_ 1537 "Manifold and atmospheric pressure, accelerator pedal.";
+CM_ BO_ 1058 "Transmission lever. Byte 2 is the lever position. Byte 0 went 0x00 to 0x01 in the manual gate (parked, 27 Nov) but was 0x45 at key-on before the engine started. Byte 5 rose slowly 0x4F to 0x55 over the drive: a temperature?";
 CM_ BO_ 1297 "Brake pressure in byte 4. Byte 7 changed from 0 to 8 at 21.2 s on 27 Nov, just before the wheel first turned: possibly a steering-sensor-ready flag.";
-CM_ BO_ 1056 "Transmission. Byte 1 is the gear position. Byte 2 bit 3 was set 14.87-15.83 s on 27 Nov, in the manual gate; bit 7 set once in R or D. No change seen for a manual gear number yet (no +/- shifts tried).";
-CM_ BO_ 1057 "Transmission. Byte 5 read 0x80 in D and 0x10 in the manual gate (27 Nov), 0xB0/0xD0 while starting: possibly a mode byte.";
+CM_ BO_ 1056 "Transmission. Byte 1: gear engaged (low half) and gear being shifted to (high half). Byte 2 bit 3 was set in the manual gate when parked; bit 6 came on at 87.8 s on the 27 Nov drive (with 0x421 byte 5 and 0x410 byte 7 bit 5): possibly a warm-up threshold.";
+CM_ BO_ 1057 "Transmission. Byte 5: 0x40 driving in M, 0x80 in D, 0xB0 in D after 87.8 s on the 27 Nov drive, 0x10 in the manual gate when parked, 0xB0/0xD0 while starting: a mode byte.";
+CM_ BO_ 1300 "Body: brake switch (byte 0), fuel level (byte 2), wipers, rear demister and lights (byte 3).";
 CM_ SG_ 2 Counter_002 "Steps every frame (both halves of the byte): a message counter.";
 CM_ SG_ 112 Counter_070 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 112 Checksum_070 "Changes unpredictably right after the counter: likely a checksum.";
 CM_ SG_ 117 Counter_075 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 117 Checksum_075 "Changes unpredictably right after the counter: likely a checksum.";
 CM_ SG_ 1041 BrakeSwitch_411 "Byte 6 bit 4. Confirmed 26 Nov, and 27 Nov against the ECU's brake switch (on 7.0 s, off 8.8 s, on 9.9 s).";
-CM_ SG_ 1056 GearState_420 "Byte 1: 0x88 P, 0x77 R, 0x00 N, 0x11 D. Confirmed 27 Nov against the ECU's neutral switch, P > R > N > D > N > R > P. The 26 Nov capture's 0x77 was Reverse, not Drive.";
 CM_ SG_ 1057 Counter_421 "8-bit rolling counter, +1 every frame.";
 CM_ SG_ 1058 GearSelector_422 "Byte 2: 7 P, 6 R, 5 N, 4 D, 8 M (lever in the manual gate; also flashes 8 for a moment between positions). Confirmed 27 Nov against the ECU's neutral switch, and the manual gate 14.83-15.72 s. The 26 Nov capture's 6 was Reverse, not Drive.";
 CM_ SG_ 1281 Counter_501 "8-bit rolling counter, +1 every frame.";
@@ -100,15 +120,36 @@ CM_ SG_ 1300 Counter_514 "4-bit counter in the low half of byte 6, steps by 2.";
 CM_ SG_ 1398 Counter_576 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 1398 Checksum_576 "Changes unpredictably right after the counter: likely a checksum.";
 CM_ SG_ 1536 Counter_600 "8-bit rolling counter, +1 every frame.";
-CM_ SG_ 1568 GearSelector_620 "Byte 2: 7 in Park, 3 in any other position (R, N and D all read 3). Confirmed 27 Nov.";
+CM_ SG_ 1568 InPark_620 "Byte 2 bit 2: 1 in Park, 0 in R, N, D and M. Confirmed 26 and 27 Nov (byte 2 read 7/3 with the lights off, 5/1 on the drive with them on).";
+CM_ SG_ 1568 DayFlag_620 "Byte 2 bit 1: 1 in both earlier captures (lights off), 0 throughout the 27 Nov drive with the headlights on. Possibly the dash dimming / lights-on signal (inverted); unconfirmed.";
 CM_ SG_ 2 SteeringAngle_002 "Top 12 bits of bytes 0-1 (little-endian, signed), 1 degree per unit; positive is left. Confirmed 27 Nov: full lock left read 586 deg, right -584 deg, about 3.3 turns lock to lock. The low 4 bits of byte 0 are separate flags (0xE when valid). Reads -2048 (bytes 0C 80, named 'not ready') after the engine starts until the wheel first moves. Scale assumes those were full lock: check that one turn from centre reads 360.";
 CM_ SG_ 1040 EngineSpeed_410 "Bytes 5-6, little-endian, 1 rpm per unit. Confirmed 27 Nov against the ECU's engine speed (r = 1.000, 0 to 1629 rpm).";
-CM_ SG_ 1042 Throttle_412 "Byte 5. Followed the ECU's throttle opening (r = 0.98) at idle only (8.6-12.5%); scaling from that narrow range, to confirm with a rev. Likely.";
-CM_ SG_ 1536 CoolantTemp_600 "Byte 3, minus 40. Confirmed 27 Nov: exactly the ECU's coolant temperature (26-28 C).";
-CM_ SG_ 1536 IntakeAirTemp_600 "Byte 7, minus 40: read 26-27 C while the ECU logged 27-28 C. Likely; check on a warmer day.";
-CM_ SG_ 1537 ManifoldPressure_601 "Byte 3. Followed the ECU's manifold pressure (r = 0.999, 4.8-14.8 psi) with this approximate fit. Likely; scaling to refine.";
-CM_ SG_ 1058 ManualMode_422 "Byte 1 bit 0: 1 from 40 ms after the lever entered the manual gate until 30 ms after it left; likely the transmission confirming manual mode. Confirmed 27 Nov.";
-VAL_ 1056 GearState_420 136 "P" 119 "R" 0 "N" 17 "D" ;
+CM_ SG_ 1042 Throttle_412 "Byte 5. Confirmed on the 27 Nov drive against the ECU's throttle opening (r = 0.992, 0-67%, within 0.5%).";
+CM_ SG_ 1536 CoolantTemp_600 "Byte 3, minus 40. Confirmed: exactly the ECU's coolant temperature (26-28 C parked, 45-67 C on the 27 Nov drive).";
+CM_ SG_ 1537 ManifoldPressure_601 "Byte 3. Confirmed on the 27 Nov drive against the ECU's manifold pressure (r = 0.999, 3-15 psi, within 0.13 psi); same fit as the parked capture.";
+CM_ SG_ 1058 ManualMode_422 "Byte 1 bit 0: 1 after the lever entered the manual gate while parked (27 Nov). While driving in M on the 27 Nov drive byte 1 read 0x13, 0x1A and 0x09 during 3-2-1 downshifts, so this byte also carries manual shift requests; GearSelector_422 = 8 is the reliable M signal.";
+CM_ SG_ 1056 Gear_420 "Low half of byte 1: the gear engaged - 1, 2, 3 (4) in D or M, 7 R, 8 P, 0 N. Confirmed on the 27 Nov drive: 1-2-3 upshifts and 3-2-1 downshifts, and P/R/N against the ECU's neutral switch.";
+CM_ SG_ 1056 GearTarget_420 "High half of byte 1: the gear being shifted to. It changes first and Gear_420 follows when the shift completes (byte 1 reads 0x21 during a 1-2 upshift, 0x23 during a 3-2 downshift). Confirmed on the 27 Nov drive.";
+CM_ SG_ 1536 TransFluidTemp_600 "Byte 7, minus 40. Not intake air (that stayed 27-31 C on the 27 Nov drive while this rose from 32 to 45 C, behind the coolant). Likely transmission fluid temperature; unconfirmed.";
+CM_ SG_ 1536 Blower_600 "Byte 6 bit 0: on when the heater/AC fan was switched on (43.6 s on the 27 Nov drive). Matches the ECU's blower fan switch.";
+CM_ SG_ 1536 MassAirFlow_600 "Bytes 1-2, little-endian. Followed the ECU's mass air flow (r = 0.993, 1-44 g/s) on the 27 Nov drive. Likely; scaling from a fit.";
+CM_ SG_ 1537 AtmosPressure_601 "Byte 1, same scale as manifold pressure: 221 = 14.74 psi, matching the ECU's atmospheric pressure (14.8-14.95). Equals manifold pressure with the engine off. Likely.";
+CM_ SG_ 1537 AccelPedal_601 "Byte 4, 100/256 % per unit. Confirmed on the 27 Nov drive: the ECU's accelerator opening (0-25%) within 0.4%. 0x412 byte 0 carries the same value.";
+CM_ SG_ 1042 AccelPedal_412 "Byte 0, the same accelerator value as 0x601 byte 4. Confirmed on the 27 Nov drive.";
+CM_ SG_ 1042 EngineLoad_412 "Bytes 1-2 (little-endian; bytes 3-4 repeat them). Followed the ECU's engine load (r = 0.97) on the 27 Nov drive. Likely; could be a torque figure.";
+CM_ SG_ 1040 AcCompressor_410 "Byte 7 bit 2: the A/C compressor clutch. Matches the ECU's A/C compressor signal exactly on the 27 Nov drive, including the compressor cycling off for a few seconds.";
+CM_ SG_ 1040 PowerSteeringSw_410 "Byte 7 bit 3: matched the ECU's power steering switch (r = 0.87) on the 27 Nov drive, on while turning at low speed. Likely.";
+CM_ SG_ 1298 VehicleSpeed_512 "Bytes 2-3, little-endian, 0.05625 km/h per unit. Confirmed on the 27 Nov drive against the ECU's vehicle speed (0-38 km/h, within 0.5 km/h).";
+CM_ SG_ 1299 WheelSpeedA_513 "Four wheel speeds, 2 bytes each, little-endian, 0.05625 km/h per unit; they differ slightly in corners. Confirmed on the 27 Nov drive. Which wheel is which: to work out (a tight turn makes the outside wheels faster).";
+CM_ SG_ 1299 WheelSpeedB_513 "Four wheel speeds, 2 bytes each, little-endian, 0.05625 km/h per unit; they differ slightly in corners. Confirmed on the 27 Nov drive. Which wheel is which: to work out (a tight turn makes the outside wheels faster).";
+CM_ SG_ 1299 WheelSpeedC_513 "Four wheel speeds, 2 bytes each, little-endian, 0.05625 km/h per unit; they differ slightly in corners. Confirmed on the 27 Nov drive. Which wheel is which: to work out (a tight turn makes the outside wheels faster).";
+CM_ SG_ 1299 WheelSpeedD_513 "Four wheel speeds, 2 bytes each, little-endian, 0.05625 km/h per unit; they differ slightly in corners. Confirmed on the 27 Nov drive. Which wheel is which: to work out (a tight turn makes the outside wheels faster).";
+CM_ SG_ 1300 FuelLevel_514 "Byte 2: 0x8C on 26 Nov, 0x80 the next morning, falling 0x80 > 0x7D during the drive. Likely fuel level (raw); to confirm against the gauge.";
+CM_ SG_ 1300 RearDefog_514 "Byte 3 bit 0: on 50.0-52.0 s on the 27 Nov drive, matching the ECU's rear defogger switch.";
+CM_ SG_ 1300 Wiper_514 "Byte 3 bit 6: on for about 1 s every 16 s on the 27 Nov drive (intermittent wipe), exactly with the ECU's wiper switch. Likely the wiper motor running each sweep.";
+CM_ SG_ 1300 LightsA_514 "Byte 3 bit 1: 0 in both earlier captures (lights off), 1 throughout the 27 Nov drive with the headlights on. Lights, unconfirmed which (parking, low beam or high beam): toggle each light on its own.";
+CM_ SG_ 1300 LightsB_514 "Byte 3 bit 2: as LightsA_514 - 0 with the lights off, 1 throughout the 27 Nov drive. Lights, unconfirmed which.";
+VAL_ 1056 Gear_420 0 "N" 1 "1" 2 "2" 3 "3" 4 "4" 7 "R" 8 "P" ;
+VAL_ 1056 GearTarget_420 0 "N" 1 "1" 2 "2" 3 "3" 4 "4" 7 "R" 8 "P" ;
 VAL_ 1058 GearSelector_422 7 "P" 6 "R" 5 "N" 4 "D" 8 "M" ;
 VAL_ 2 SteeringAngle_002 -2048 "not ready" ;
-VAL_ 1568 GearSelector_620 7 "P" 3 "not P" ;
