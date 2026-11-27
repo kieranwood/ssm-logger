@@ -92,6 +92,8 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   with a note on each saying how it was confirmed, and notes on the messages that are still only candidates.
   To carry on: open a capture in the CAN window, Signals ▸ Import DBC… that file, find more in the signal
   finder, then Export DBC ▸ Save file and save it back over `can/forester-2012.dbc`.
+  Importing a newer version replaces everything the previous import brought in (renamed or removed signals
+  go too); signals you found or added yourself are always kept.
   The **Decoded** view shows those signals as what they mean: named states as the current one
   highlighted (the gear as P / D), one-bit signals as lamps, numbers with their range, each over a timeline
   of the capture that you can drag along or play back. Name values… gives a signal's values names

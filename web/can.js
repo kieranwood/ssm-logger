@@ -1133,17 +1133,19 @@ const CanBus = (() => {
       const f = file.files[0];
       if (!f) return;
       const got = parseDbc(await f.text());
-      // a signal of the same name from an earlier import is replaced (the file is newer);
-      // one you found or added yourself is kept
+      // the file replaces everything an earlier import brought in: same-named signals are updated and
+      // ones no longer in the file are removed. Signals you found or added yourself are always kept.
       const mine = new Set(st.signals.filter((g) => g.src !== "imported").map((g) => g.name));
       const added = got.filter((g) => !mine.has(g.name));
-      const addedNames = new Set(added.map((g) => g.name));
-      st.signals = st.signals.filter((g) => !addedNames.has(g.name)).concat(added);
+      const gotNames = new Set(got.map((g) => g.name));
+      const removed = st.signals.filter((g) => g.src === "imported" && !gotNames.has(g.name)).map((g) => g.name);
+      st.signals = st.signals.filter((g) => g.src !== "imported").concat(added);
       store(SIG_KEY, st.signals);
       store(NODE_KEY, st.nodes);
       store(MSG_KEY, st.messages);
-      st.importMsg = `Imported ${f.name}: ${added.length} signal${added.length === 1 ? "" : "s"} added` +
-        (got.length - added.length ? `, ${got.length - added.length} skipped (same name as one of yours)` : "") + ".";
+      st.importMsg = `Imported ${f.name}: ${added.length} signal${added.length === 1 ? "" : "s"}` +
+        (got.length - added.length ? `, ${got.length - added.length} skipped (same name as one of yours)` : "") +
+        (removed.length ? `. Removed ${removed.length} from an earlier import that ${removed.length === 1 ? "is" : "are"} no longer in the file: ${removed.join(", ")}` : "") + ".";
       draw(true);
     });
     const exp = text("button", `btn ${st.showDbc ? "primary" : ""}`, "Export DBC");
