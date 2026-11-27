@@ -269,12 +269,12 @@ class DemoSerialPort {
       [0x002, 1, [0x0c, 0x80, (n4 << 4) | 0x04, 0, 0, 0, 0, 0x01]],
       [0x070, 2, sum([0xf0 + noise(), 0x7f, 0, 0xff, 0x80 + noise(), 0x7f, n4, 0])],
       [0x075, 2, sum([0, 0, 0, 0, 0, Math.abs(noise()), n4, 0])],
-      [0x410, 1, [Math.round(20 + thr * 0.6), 0, Math.round(34 + load * 0.4), 10, 0, ...le16(Math.max(0, 1120 - Math.round(load * 6))), 0xc4]],
+      [0x410, 1, [Math.round(20 + thr * 0.6), 0, Math.round(34 + load * 0.4), 10, 0, ...le16(Math.round(rpm)), 0xe8]],   // engine speed, bytes 5-6
       [0x411, 1, [0, 0xff, 0x3f, 0, 0, 0, brake ? 0x1c : 0x0c, 0x04]],
-      [0x412, 1, [0, ...le16(r), ...le16(r), 22, 8, 2]],
-      [0x420, 1, [0, neutral ? 0x88 : 0x77, 0x41, 0x40, Math.max(0, 137 - Math.round(thr * 4)), 0x40, 0xfa, 0x80]],
+      [0x412, 1, [0, ...le16(r), ...le16(r), (thr - 0.18) / 0.413, 8, 2]],             // throttle, byte 5
+      [0x420, 1, [0, neutral ? 0x88 : 0x11, 0x41, 0x40, Math.max(0, 137 - Math.round(thr * 4)), 0x40, 0xfa, 0x80]],
       [0x421, 1, [0xff, 0, 0xff, c, 0, 0xb0, 0, 0]],
-      [0x422, 1, [0, 0, neutral ? 7 : 6, 0xff, 0x7f, 0x58, 0, 0x7d]],
+      [0x422, 1, [0, 0, neutral ? 7 : 4, 0xff, 0x7f, 0x58, 0, 0x7d]],
       [0x501, 2, [0, 0, 0, 0xff, 0, c, 0, 0]],
       [0x511, 2, [0xfc, 0xff, 0, 0, Math.round(pressure), 1, 0, 0]],
       [0x512, 2, [0, 0xf0, 0, 0, brake ? 0x90 : 0x80, c, 0xff, 0x7f]],
@@ -282,7 +282,7 @@ class DemoSerialPort {
       [0x514, 2, [brake ? 8 : 0, 0, 0x8c, 0, 0xc8, 117, (k * 2) & 15, 0x80]],
       [0x576, 2, sum([0, 0, 0, 0, 10 + Math.abs(noise()), 25 + noise(), 0x10 | n4, 0])],
       [0x600, 5, [0, 128 + noise() * 8, 2, Math.round(cool + 40), c, 0x0e, 1, Math.round(iat + 40)]],
-      [0x601, 1, [0, 0xde, 0, Math.round(70 + thr * 1.2), 0, 0x29, 0, 0]],
+      [0x601, 1, [0, 0xdd, 0, (num("Manifold Absolute Pressure", 5) - 1.93) / 0.0582, 0, 0x29, 0, 0]],   // manifold pressure, byte 3
       [0x620, 2, [0x20, 0, neutral ? 7 : 3, 0, 0, 0, 0, 0]],
     ];
     const stamp = Math.round(performance.now() * 1000) >>> 0;

@@ -9,6 +9,7 @@ BS_:
 BU_:
 
 BO_ 2 MSG_2: 8 Vector__XXX
+ SG_ SteeringAngle_002 : 0|16@1- (1,0) [-32768|32767] "raw" Vector__XXX
  SG_ Counter_002 : 16|8@1+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 112 MSG_70: 8 Vector__XXX
@@ -20,11 +21,13 @@ BO_ 117 MSG_75: 8 Vector__XXX
  SG_ Checksum_075 : 56|8@1+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 1040 MSG_410: 8 Vector__XXX
+ SG_ EngineSpeed_410 : 40|16@1+ (1,0) [0|8000] "rpm" Vector__XXX
 
 BO_ 1041 MSG_411: 8 Vector__XXX
  SG_ BrakeSwitch_411 : 52|1@1+ (1,0) [0|1] "" Vector__XXX
 
 BO_ 1042 MSG_412: 8 Vector__XXX
+ SG_ Throttle_412 : 40|8@1+ (0.413,0.18) [0|100] "%" Vector__XXX
 
 BO_ 1056 MSG_420: 8 Vector__XXX
  SG_ GearState_420 : 8|8@1+ (1,0) [0|255] "" Vector__XXX
@@ -56,40 +59,50 @@ BO_ 1398 MSG_576: 8 Vector__XXX
  SG_ Checksum_576 : 56|8@1+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 1536 MSG_600: 8 Vector__XXX
+ SG_ CoolantTemp_600 : 24|8@1+ (1,-40) [-40|215] "degC" Vector__XXX
  SG_ Counter_600 : 32|8@1+ (1,0) [0|255] "" Vector__XXX
+ SG_ IntakeAirTemp_600 : 56|8@1+ (1,-40) [-40|215] "degC" Vector__XXX
 
 BO_ 1537 MSG_601: 8 Vector__XXX
+ SG_ ManifoldPressure_601 : 24|8@1+ (0.0582,1.93) [0|30] "psi" Vector__XXX
 
 BO_ 1568 MSG_620: 8 Vector__XXX
  SG_ GearSelector_620 : 16|8@1+ (1,0) [0|255] "" Vector__XXX
 
 CM_ "2012 Subaru Forester (SH, FB25, auto), CAN traffic at the OBD port, 500 kbit/s. Worked out by watching captures (logs/can_*.csv, probe.py --listen) while doing known things; not official Subaru definitions. Import in the website under Tools > CAN bus > Signals, keep identifying, export and save back over this file.";
-CM_ BO_ 2 "Steering angle on a 2016 WRX (bytes 0-1, afreiday/2016-wrx-can-ids); unconfirmed here - didn't move in the 26 Nov capture (no steering).";
-CM_ BO_ 112 "Values sitting just either side of 0x8000 with sensor-like noise in bytes 0-1 and 4-5 while parked: possibly yaw rate or acceleration. Unconfirmed.";
-CM_ BO_ 1040 "Engine group candidate: bytes 0 and 2 rose, bytes 5-6 (16-bit, little-endian) fell, with a rev and with the engine loading up in Drive. Which is throttle, load or torque: to confirm with probe.py --listen --with-ssm.";
-CM_ BO_ 1042 "Engine group candidate: bytes 1-2 (16-bit, little-endian; bytes 3-4 repeat them) rose from about 440 at idle to 684 with a rev / Drive. To confirm against logged engine speed and load.";
+CM_ BO_ 2 "Steering angle (SteeringAngle_002). The 2016 WRX uses the same bytes (afreiday/2016-wrx-can-ids).";
+CM_ BO_ 112 "Values sitting just either side of 0x8000 with sensor-like noise in bytes 0-1 and 4-5 while parked: possibly yaw rate or acceleration. Byte 1 flicked between 0x7F and 0x80 while the wheel was turned on 27 Nov. Unconfirmed.";
+CM_ BO_ 1040 "Engine group. Bytes 5-6 are engine speed (confirmed). Bytes 0 and 2 rose with load: unidentified.";
+CM_ BO_ 1042 "Engine group. Byte 5 tracks throttle opening (likely). Bytes 1-2 (repeated in 3-4) rose with load in Drive: not engine speed (that's 0x410); a load or torque figure, unconfirmed.";
 CM_ BO_ 1299 "All zeros while parked: would fit wheel speeds. Check on a slow drive.";
-CM_ BO_ 1536 "Bytes 3 and 7 each rose by exactly one over 10 s (86->87, 84->85): slow, like temperatures. Check against coolant and intake air temperature.";
-CM_ BO_ 1537 "Engine group candidate: byte 3 rose from about 74 at idle to 106 with a rev / Drive.";
+CM_ BO_ 1536 "Coolant temperature in byte 3 (confirmed), intake air temperature likely in byte 7.";
+CM_ BO_ 1537 "Manifold pressure in byte 3 (likely). Byte 1 stays at 221, the same as byte 3 with the engine off: possibly atmospheric pressure.";
+CM_ BO_ 1297 "Brake pressure in byte 4. Byte 7 changed from 0 to 8 at 21.2 s on 27 Nov, just before the wheel first turned: possibly a steering-sensor-ready flag.";
 CM_ SG_ 2 Counter_002 "Steps every frame (both halves of the byte): a message counter.";
 CM_ SG_ 112 Counter_070 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 112 Checksum_070 "Changes unpredictably right after the counter: likely a checksum.";
 CM_ SG_ 117 Counter_075 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 117 Checksum_075 "Changes unpredictably right after the counter: likely a checksum.";
-CM_ SG_ 1041 BrakeSwitch_411 "Byte 6 bit 4. Confirmed 26 Nov: on 3.4 s, off 4.4 s, on 5.1 s, as the brake was pressed, released and held.";
-CM_ SG_ 1056 GearState_420 "Byte 1: 0x88 in Park, 0x77 in Drive (0 for a moment while shifting). Confirmed 26 Nov, P > D > P.";
+CM_ SG_ 1041 BrakeSwitch_411 "Byte 6 bit 4. Confirmed 26 Nov, and 27 Nov against the ECU's brake switch (on 7.0 s, off 8.8 s, on 9.9 s).";
+CM_ SG_ 1056 GearState_420 "Byte 1: 0x88 P, 0x77 R, 0x00 N, 0x11 D. Confirmed 27 Nov against the ECU's neutral switch, P > R > N > D > N > R > P. The 26 Nov capture's 0x77 was Reverse, not Drive.";
 CM_ SG_ 1057 Counter_421 "8-bit rolling counter, +1 every frame.";
-CM_ SG_ 1058 GearSelector_422 "Byte 2: 7 in Park, 6 in Drive, 8 for a moment passing R/N. Confirmed 26 Nov, P > D > P. R and N not yet seen on their own.";
+CM_ SG_ 1058 GearSelector_422 "Byte 2: 7 P, 6 R, 5 N, 4 D; 8 for a moment between positions. Confirmed 27 Nov against the ECU's neutral switch. 8 also held for 0.9 s at 14.8 s while in Drive (bytes 0 and 1 went to 1 with it): unidentified, perhaps the manual gate. The 26 Nov capture's 6 was Reverse, not Drive.";
 CM_ SG_ 1281 Counter_501 "8-bit rolling counter, +1 every frame.";
 CM_ SG_ 1297 BrakePressure_511 "Byte 4: 0 released, rising to about 49 held firmly, easing off on release. Likely brake pressure; real units unknown (raw).";
-CM_ SG_ 1298 BrakeSwitch_512 "Byte 4 bit 4. Confirmed 26 Nov: on 3.41 s, off 4.41 s, on 5.03 s with the brake.";
+CM_ SG_ 1298 BrakeSwitch_512 "Byte 4 bit 4. Confirmed 26 Nov, and 27 Nov against the ECU's brake switch (on 7.0 s, off 8.8 s, on 9.8 s).";
 CM_ SG_ 1298 Counter_512 "8-bit rolling counter, +1 every frame.";
-CM_ SG_ 1300 BrakeSwitch_514 "Byte 0 bit 3. Confirmed 26 Nov: on 3.43 s, off 4.43 s, on 5.05 s with the brake.";
+CM_ SG_ 1300 BrakeSwitch_514 "Byte 0 bit 3. Confirmed 26 Nov, and 27 Nov against the ECU's brake switch (on 7.0 s, off 8.8 s, on 9.9 s).";
 CM_ SG_ 1300 Counter_514 "4-bit counter in the low half of byte 6, steps by 2.";
 CM_ SG_ 1398 Counter_576 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 1398 Checksum_576 "Changes unpredictably right after the counter: likely a checksum.";
 CM_ SG_ 1536 Counter_600 "8-bit rolling counter, +1 every frame.";
-CM_ SG_ 1568 GearSelector_620 "Byte 2: 7 in Park, 3 in Drive. Confirmed 26 Nov, P > D > P.";
-VAL_ 1056 GearState_420 136 "P" 119 "D" ;
-VAL_ 1058 GearSelector_422 7 "P" 6 "D" 8 "passing R/N" ;
-VAL_ 1568 GearSelector_620 7 "P" 3 "D" ;
+CM_ SG_ 1568 GearSelector_620 "Byte 2: 7 in Park, 3 in any other position (R, N and D all read 3). Confirmed 27 Nov.";
+CM_ SG_ 2 SteeringAngle_002 "Bytes 0-1, signed little-endian. Reads 0x800C (not yet valid) after the engine starts, until the wheel first moves. Confirmed 27 Nov: swept to +9326 and -9330 turning one way then the other. The low 4 bits stay fixed (flags). Scale and direction to confirm: x0.0625 would make that +/-583 degrees, about full lock.";
+CM_ SG_ 1040 EngineSpeed_410 "Bytes 5-6, little-endian, 1 rpm per unit. Confirmed 27 Nov against the ECU's engine speed (r = 1.000, 0 to 1629 rpm).";
+CM_ SG_ 1042 Throttle_412 "Byte 5. Followed the ECU's throttle opening (r = 0.98) at idle only (8.6-12.5%); scaling from that narrow range, to confirm with a rev. Likely.";
+CM_ SG_ 1536 CoolantTemp_600 "Byte 3, minus 40. Confirmed 27 Nov: exactly the ECU's coolant temperature (26-28 C).";
+CM_ SG_ 1536 IntakeAirTemp_600 "Byte 7, minus 40: read 26-27 C while the ECU logged 27-28 C. Likely; check on a warmer day.";
+CM_ SG_ 1537 ManifoldPressure_601 "Byte 3. Followed the ECU's manifold pressure (r = 0.999, 4.8-14.8 psi) with this approximate fit. Likely; scaling to refine.";
+VAL_ 1056 GearState_420 136 "P" 119 "R" 0 "N" 17 "D" ;
+VAL_ 1058 GearSelector_422 7 "P" 6 "R" 5 "N" 4 "D" 8 "between" ;
+VAL_ 1568 GearSelector_620 7 "P" 3 "not P" ;
