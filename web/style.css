@@ -1508,7 +1508,7 @@ table.kv td:first-child { color: var(--muted); }
 .dt-track { position: relative; height: 40px; border-radius: 8px; background: var(--field); overflow: hidden; }
 .dt-track.scrub { cursor: ew-resize; touch-action: none; }
 .dt-band, .dt-band svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.dt-band polyline { fill: none; stroke: var(--accent-fill); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.dt-band path { fill: none; stroke: var(--accent-fill); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .dt-seg { position: absolute; top: 6px; bottom: 6px; border-radius: 4px; background: color-mix(in srgb, var(--chip-c) 70%, var(--field));
   color: var(--chip-ink); font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; overflow: hidden; white-space: nowrap; }
 .dt-seg.on { --chip-c: var(--t-spark); color: #1b2430; }

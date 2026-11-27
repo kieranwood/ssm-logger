@@ -796,7 +796,10 @@ const CanBus = (() => {
   function kindOf(g) {
     if (g.disp && g.disp !== "auto") return g.disp;
     if (HOUSE.test(g.name)) return "house";
-    if (g.vals && Object.keys(g.vals).length) return "state";
+    if (g.vals && Object.keys(g.vals).length) {
+      const s = series(g);
+      if (!s || s.seen.size <= 32) return "state";         // a wide value with a named placeholder ("not ready") stays a number
+    }
     return g.len === 1 ? "lamp" : "number";
   }
   const phys = (g, v) => v * g.f + g.o;
@@ -810,7 +813,7 @@ const CanBus = (() => {
   function series(g) {
     const m = st.msgs.get(g.id);
     if (!m || !m.t.length) return null;
-    const key = `${m.t.length}|${m.t[0]}|${m.t[m.t.length - 1]}|${g.st}|${g.len}|${g.e}|${g.signed}`;
+    const key = `${m.t.length}|${m.t[0]}|${m.t[m.t.length - 1]}|${g.st}|${g.len}|${g.e}|${g.signed}|${JSON.stringify(g.vals || {})}`;
     const c0 = seriesCache.get(g);
     if (c0 && c0.key === key) return c0;
     const t = [], v = [], seen = new Map();
@@ -819,8 +822,10 @@ const CanBus = (() => {
       let x = value(m.d[i], g.st, g.len, g.e);
       if (x === null) continue;
       if (g.signed && x >= 2 ** (g.len - 1)) x -= 2 ** g.len;
-      if (x < lo) lo = x;
-      if (x > hi) hi = x;
+      if (g.vals?.[String(x)] == null) {                   // named values (placeholders) stay out of the range
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+      }
       if (seen.has(x) || seen.size <= 64) seen.set(x, (seen.get(x) || 0) + 1);
       if (x !== prev) { t.push(m.t[i]); v.push(x); prev = x; }
     }
@@ -956,16 +961,19 @@ const CanBus = (() => {
       if (kind === "number") {
         const lo = phys(g, s.lo), hi = phys(g, s.hi), r = hi - lo || 1;
         const Y = (v) => (40 - ((phys(g, v) - lo) / r) * 36 - 2).toFixed(1);
-        let pts = "";
+        let path = "", pen = false;
+        const named = (v) => g.vals?.[String(v)] != null;
         const i0 = Math.max(0, bsearch(s.t, a));
         const step = Math.max(1, Math.floor((s.t.length - i0) / 1500));
         for (let i = i0; i < s.t.length; i += step) {
-          const x = (X(s.t[i]) * 10).toFixed(1);
-          if (pts) pts += ` ${x},${Y(s.v[i - 1] ?? s.v[i])}`;   // hold the previous value until the change
-          pts += ` ${x},${Y(s.v[i])}`;
+          const x = (X(s.t[i]) * 10).toFixed(1), v = s.v[i];
+          if (pen) path += `L${x},${Y(s.v[i - 1] ?? v)}`;     // hold the previous value until the change
+          if (named(v)) { pen = false; continue; }
+          path += `${pen ? "L" : "M"}${x},${Y(v)}`;
+          pen = true;
         }
-        pts += ` 1000,${Y(s.v[s.v.length - 1])}`;
-        band.innerHTML = `<svg viewBox="0 0 1000 40" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts.trim()}"></polyline></svg>`;
+        if (pen) path += `L1000,${Y(s.v[s.v.length - 1])}`;
+        band.innerHTML = `<svg viewBox="0 0 1000 40" preserveAspectRatio="none" aria-hidden="true"><path d="${path}"></path></svg>`;
         return;
       }
       const i0 = Math.max(0, bsearch(s.t, a));
@@ -1012,10 +1020,11 @@ const CanBus = (() => {
         big.textContent = v == null ? "—" : v ? "On" : "Off";
         big.classList.toggle("on", !!v);
       } else {
-        big.textContent = v == null ? "—" : `${fmtNum(phys(g, v))}${g.u ? ` ${g.u}` : ""}`;
-        if (s) {
+        const nm = v == null ? null : g.vals?.[String(v)];
+        big.textContent = v == null ? "—" : nm ?? `${fmtNum(phys(g, v))}${g.u ? ` ${g.u}` : ""}`;
+        if (s && Number.isFinite(s.lo)) {
           const lo = phys(g, s.lo), hi = phys(g, s.hi);
-          fill.style.width = v == null || hi === lo ? "0%" : `${((phys(g, v) - lo) / (hi - lo)) * 100}%`;
+          fill.style.width = v == null || nm != null || hi === lo ? "0%" : `${((phys(g, v) - lo) / (hi - lo)) * 100}%`;
           sub.textContent = `${fmtNum(lo)} – ${fmtNum(hi)}${g.u ? ` ${g.u}` : ""} in this ${st.source === "file" ? "capture" : "window"}`;
         }
       }

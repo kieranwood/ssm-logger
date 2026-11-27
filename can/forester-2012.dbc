@@ -9,7 +9,7 @@ BS_:
 BU_:
 
 BO_ 2 MSG_2: 8 Vector__XXX
- SG_ SteeringAngle_002 : 0|16@1- (1,0) [-32768|32767] "raw" Vector__XXX
+ SG_ SteeringAngle_002 : 4|12@1- (1,0) [-600|600] "deg" Vector__XXX
  SG_ Counter_002 : 16|8@1+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 112 MSG_70: 8 Vector__XXX
@@ -36,6 +36,7 @@ BO_ 1057 MSG_421: 8 Vector__XXX
  SG_ Counter_421 : 24|8@1+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 1058 MSG_422: 8 Vector__XXX
+ SG_ ManualMode_422 : 8|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ GearSelector_422 : 16|8@1+ (1,0) [0|255] "" Vector__XXX
 
 BO_ 1281 MSG_501: 8 Vector__XXX
@@ -77,7 +78,10 @@ CM_ BO_ 1042 "Engine group. Byte 5 tracks throttle opening (likely). Bytes 1-2 (
 CM_ BO_ 1299 "All zeros while parked: would fit wheel speeds. Check on a slow drive.";
 CM_ BO_ 1536 "Coolant temperature in byte 3 (confirmed), intake air temperature likely in byte 7.";
 CM_ BO_ 1537 "Manifold pressure in byte 3 (likely). Byte 1 stays at 221, the same as byte 3 with the engine off: possibly atmospheric pressure.";
+CM_ BO_ 1058 "Transmission lever. Byte 0 went 0x00 to 0x01 as the lever entered the manual gate and back as it left (27 Nov), but was also 0x45 at key-on before the engine started, so it is not a clean flag.";
 CM_ BO_ 1297 "Brake pressure in byte 4. Byte 7 changed from 0 to 8 at 21.2 s on 27 Nov, just before the wheel first turned: possibly a steering-sensor-ready flag.";
+CM_ BO_ 1056 "Transmission. Byte 1 is the gear position. Byte 2 bit 3 was set 14.87-15.83 s on 27 Nov, in the manual gate; bit 7 set once in R or D. No change seen for a manual gear number yet (no +/- shifts tried).";
+CM_ BO_ 1057 "Transmission. Byte 5 read 0x80 in D and 0x10 in the manual gate (27 Nov), 0xB0/0xD0 while starting: possibly a mode byte.";
 CM_ SG_ 2 Counter_002 "Steps every frame (both halves of the byte): a message counter.";
 CM_ SG_ 112 Counter_070 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 112 Checksum_070 "Changes unpredictably right after the counter: likely a checksum.";
@@ -86,7 +90,7 @@ CM_ SG_ 117 Checksum_075 "Changes unpredictably right after the counter: likely 
 CM_ SG_ 1041 BrakeSwitch_411 "Byte 6 bit 4. Confirmed 26 Nov, and 27 Nov against the ECU's brake switch (on 7.0 s, off 8.8 s, on 9.9 s).";
 CM_ SG_ 1056 GearState_420 "Byte 1: 0x88 P, 0x77 R, 0x00 N, 0x11 D. Confirmed 27 Nov against the ECU's neutral switch, P > R > N > D > N > R > P. The 26 Nov capture's 0x77 was Reverse, not Drive.";
 CM_ SG_ 1057 Counter_421 "8-bit rolling counter, +1 every frame.";
-CM_ SG_ 1058 GearSelector_422 "Byte 2: 7 P, 6 R, 5 N, 4 D; 8 for a moment between positions. Confirmed 27 Nov against the ECU's neutral switch. 8 also held for 0.9 s at 14.8 s while in Drive (bytes 0 and 1 went to 1 with it): unidentified, perhaps the manual gate. The 26 Nov capture's 6 was Reverse, not Drive.";
+CM_ SG_ 1058 GearSelector_422 "Byte 2: 7 P, 6 R, 5 N, 4 D, 8 M (lever in the manual gate; also flashes 8 for a moment between positions). Confirmed 27 Nov against the ECU's neutral switch, and the manual gate 14.83-15.72 s. The 26 Nov capture's 6 was Reverse, not Drive.";
 CM_ SG_ 1281 Counter_501 "8-bit rolling counter, +1 every frame.";
 CM_ SG_ 1297 BrakePressure_511 "Byte 4: 0 released, rising to about 49 held firmly, easing off on release. Likely brake pressure; real units unknown (raw).";
 CM_ SG_ 1298 BrakeSwitch_512 "Byte 4 bit 4. Confirmed 26 Nov, and 27 Nov against the ECU's brake switch (on 7.0 s, off 8.8 s, on 9.8 s).";
@@ -97,12 +101,14 @@ CM_ SG_ 1398 Counter_576 "4-bit rolling counter, +1 every frame.";
 CM_ SG_ 1398 Checksum_576 "Changes unpredictably right after the counter: likely a checksum.";
 CM_ SG_ 1536 Counter_600 "8-bit rolling counter, +1 every frame.";
 CM_ SG_ 1568 GearSelector_620 "Byte 2: 7 in Park, 3 in any other position (R, N and D all read 3). Confirmed 27 Nov.";
-CM_ SG_ 2 SteeringAngle_002 "Bytes 0-1, signed little-endian. Reads 0x800C (not yet valid) after the engine starts, until the wheel first moves. Confirmed 27 Nov: swept to +9326 and -9330 turning one way then the other. The low 4 bits stay fixed (flags). Scale and direction to confirm: x0.0625 would make that +/-583 degrees, about full lock.";
+CM_ SG_ 2 SteeringAngle_002 "Top 12 bits of bytes 0-1 (little-endian, signed), 1 degree per unit; positive is left. Confirmed 27 Nov: full lock left read 586 deg, right -584 deg, about 3.3 turns lock to lock. The low 4 bits of byte 0 are separate flags (0xE when valid). Reads -2048 (bytes 0C 80, named 'not ready') after the engine starts until the wheel first moves. Scale assumes those were full lock: check that one turn from centre reads 360.";
 CM_ SG_ 1040 EngineSpeed_410 "Bytes 5-6, little-endian, 1 rpm per unit. Confirmed 27 Nov against the ECU's engine speed (r = 1.000, 0 to 1629 rpm).";
 CM_ SG_ 1042 Throttle_412 "Byte 5. Followed the ECU's throttle opening (r = 0.98) at idle only (8.6-12.5%); scaling from that narrow range, to confirm with a rev. Likely.";
 CM_ SG_ 1536 CoolantTemp_600 "Byte 3, minus 40. Confirmed 27 Nov: exactly the ECU's coolant temperature (26-28 C).";
 CM_ SG_ 1536 IntakeAirTemp_600 "Byte 7, minus 40: read 26-27 C while the ECU logged 27-28 C. Likely; check on a warmer day.";
 CM_ SG_ 1537 ManifoldPressure_601 "Byte 3. Followed the ECU's manifold pressure (r = 0.999, 4.8-14.8 psi) with this approximate fit. Likely; scaling to refine.";
+CM_ SG_ 1058 ManualMode_422 "Byte 1 bit 0: 1 from 40 ms after the lever entered the manual gate until 30 ms after it left; likely the transmission confirming manual mode. Confirmed 27 Nov.";
 VAL_ 1056 GearState_420 136 "P" 119 "R" 0 "N" 17 "D" ;
-VAL_ 1058 GearSelector_422 7 "P" 6 "R" 5 "N" 4 "D" 8 "between" ;
+VAL_ 1058 GearSelector_422 7 "P" 6 "R" 5 "N" 4 "D" 8 "M" ;
+VAL_ 2 SteeringAngle_002 -2048 "not ready" ;
 VAL_ 1568 GearSelector_620 7 "P" 3 "not P" ;
