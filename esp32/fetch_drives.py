@@ -34,20 +34,21 @@ class Board:
         self.ser.open()
         time.sleep(1.5)        # opening the port resets the board: let it boot before talking to it
         self.ser.reset_input_buffer()
+        self.buf = b""         # kept between reads, so a line after the one asked for isn't lost
 
     def lines(self, timeout: float):
         """Yield lines from the board until timeout seconds pass with nothing new."""
         last = time.monotonic()
-        buf = b""
-        while time.monotonic() - last < timeout:
-            chunk = self.ser.read(self.ser.in_waiting or 1)
-            if not chunk:
-                continue
-            last = time.monotonic()
-            buf += chunk
-            *done, buf = buf.split(b"\n")
-            for ln in done:
+        while True:
+            while b"\n" in self.buf:
+                ln, self.buf = self.buf.split(b"\n", 1)
                 yield ln.rstrip(b"\r").decode("latin-1")
+            if time.monotonic() - last >= timeout:
+                return
+            chunk = self.ser.read(self.ser.in_waiting or 1)
+            if chunk:
+                last = time.monotonic()
+                self.buf += chunk
 
     def command(self, text: str) -> None:
         self.ser.write(b"\n" + text.encode() + b"\n")
@@ -103,6 +104,7 @@ class Board:
                             if ln2.startswith(("ABORT", "END")):
                                 break
                         self.ser.reset_input_buffer()
+                        self.buf = b""
                         break
                 elif ln == f"END {name}":
                     break
