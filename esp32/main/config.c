@@ -37,11 +37,23 @@ void config_load(logger_config_t *c)
     while (n && c->url[n - 1] == '/') c->url[--n] = 0;
 }
 
+esp_err_t config_get(const char *key, char *out, size_t cap)
+{
+    out[0] = 0;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NS, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    get(h, key, out, cap);
+    nvs_close(h);
+    return ESP_OK;
+}
+
 esp_err_t config_set(const char *key, const char *value)
 {
     static const struct { const char *key; size_t cap; } keys[] = {
         {"ssid", sizeof ((logger_config_t *)0)->ssid}, {"pass", sizeof ((logger_config_t *)0)->pass},
         {"url", sizeof ((logger_config_t *)0)->url}, {"token", sizeof ((logger_config_t *)0)->token},
+        {"sleep", 4}, {"wake_mv", 8}, {"adc_scale", 12},
     };
     size_t cap = 0;
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) {

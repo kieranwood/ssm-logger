@@ -35,6 +35,9 @@ static char s_dir[200];
 static char s_status[128] = "starting";
 static size_t (*s_free_bytes)(void);
 static char s_last_wait[160];
+static void (*s_on_connect)(int obd_mv);
+
+void dl_on_connect(void (*cb)(int obd_mv)) { s_on_connect = cb; }
 
 static struct {
     uint8_t init[255];
@@ -116,6 +119,7 @@ static bool connect_ecu(bool first)
     }
     char ecu[11];
     for (int i = 0; i < 5; i++) snprintf(ecu + 2 * i, 3, "%02X", r[4 + i]);
+    if (s_on_connect && S.mv) s_on_connect(S.mv);
     if (first) {
         S.init_len = (size_t)(n - 1) < sizeof S.init ? (size_t)(n - 1) : sizeof S.init;
         memcpy(S.init, r + 1, S.init_len);

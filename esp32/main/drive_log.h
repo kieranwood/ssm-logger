@@ -23,5 +23,8 @@ void dl_init(const char *dir, size_t (*free_bytes)(void));
 // Returns false straight away (after one attempt) if the ECU didn't answer.
 bool dl_step(void);
 
+// Called with the OpenPort's OBD voltage (mV) each time the ECU connects (NULL: nothing).
+void dl_on_connect(void (*cb)(int obd_mv));
+
 // What it's doing, in words (for the console).
 const char *dl_status(void);

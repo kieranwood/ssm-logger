@@ -5,8 +5,9 @@ OpenPort plugs into the board's own USB port, which acts as a USB host. It is be
 
 1. ~~Connection test~~: passed in the car (ECU 7152345007, 100/100 reads). The code is in commit 39f2986.
 2. **Logging** (this firmware): every drive is recorded to flash as raw SSM replies.
-3. Wi-Fi upload to `log_server.py`, which turns the raw replies into the usual CSV.
-4. Deep sleep while parked, waking on the battery voltage.
+3. ~~Wi-Fi upload~~ to `log_server.py`, which turns the raw replies into the usual CSV: working.
+4. **Deep sleep while parked** (this firmware), waking when the engine runs. Only needed on constant
+   power: see [Sleep](#sleep).
 
 `main/openport.c` is a C port of the parts of [`openport.py`](../openport.py) that SSM logging needs: the
 same commands and the same packet parsing. Like the Python logger, it only reads from the ECU.
@@ -94,6 +95,54 @@ a new one.
 
 The console commands, if you want them by hand: `ls`, `get NAME`, `rm NAME`, `df`, `status`.
 
+## Sleep
+
+This only matters if the board is on **constant** 12 V power, from a fuse tap on a circuit that's
+always live or from an OBD splitter's pin 16, through a 12 V → 5 V converter to its 5 V pin. On a
+charger that only has power with the ignition on, the board is already off while parked, and sleep
+gains nothing.
+
+With sleep on, the board deep-sleeps once a drive is over. That's 60 s after the ECU stops answering,
+once the uploader has had a go, and not within 5 minutes of anyone using the COM port. It also sleeps
+if the battery falls below 11.8 V while parked. While asleep it wakes every 5 s for a moment to measure
+the battery. It boots and logs when the battery is above 13.2 V and has risen at least 0.4 V above its
+lowest reading since it went to sleep: the alternator is charging, so the engine is running. A battery
+settling after the engine stops only falls, so it doesn't wake the board. A restart, even a few minutes
+later, jumps the voltage to about 14 V. Logging starts within about 10 s of the engine starting; the
+ignition being on alone doesn't wake it, but key-on-only sessions are thrown away anyway.
+
+**Wiring: a divider from the same 12 V feed into GPIO4.**
+
+```
+12 V feed ──[ 100 kΩ ]──┬── GPIO4
+                        │
+                    [ 22 kΩ ]   ║ 100 nF
+                        │       ║
+GND ────────────────────┴───────╨──
+```
+
+That puts 16 V at 2.9 V on the pin, inside the ADC's range. The 100 kΩ resistor limits the current
+from voltage spikes to a fraction of a mA, which the pin's protection diodes absorb. A 3.3 V Zener
+across the 22 kΩ adds margin. The exact resistor values don't matter much: the board calibrates the
+divider against the OpenPort's own battery reading whenever the ECU connects. Until the first drive
+it assumes 100 kΩ / 22 kΩ.
+
+**Turning it on**, with the Mac on COM and the divider connected to 12 V:
+
+```sh
+.venv/bin/python esp32/fetch_drives.py --port PORT --status            # power: battery 12.6 V ...
+.venv/bin/python esp32/fetch_drives.py --port PORT --set sleep=on      # refused unless the divider reads 9-17 V
+.venv/bin/python esp32/fetch_drives.py --port PORT --set wake_v=13.4   # if 13.2 V turns out too low
+```
+
+The board won't turn sleep on, and never sleeps, unless the divider reads a believable battery voltage,
+so it can't go to sleep with nothing to wake it. Opening the COM port always resets the board and
+wakes it.
+
+What it draws while asleep depends mostly on things outside the ESP32 chip, so measure it: the dev
+board's regulator and LEDs, the 12 V → 5 V converter's own idle current (choose one with a low
+quiescent current), and the OpenPort, which takes power from the OBD port whenever it's plugged in.
+
 ## Host tests
 
 The firmware's logic also runs on your Mac, against a fake OpenPort with a fake ECU behind it
@@ -109,6 +158,12 @@ rm -rf /tmp/ssmdrives && mkdir -p /tmp/ssmgen /tmp/ssmdrives
 python3 ../gen_params.py ../../definitions/log_defs.xml /tmp/ssmgen/ssm_params.h
 cc -std=c11 -Wall -fsanitize=address,undefined -Istub -I/tmp/ssmgen -o /tmp/test_drive_log test_drive_log.c ../main/drive_log.c
 /tmp/test_drive_log /tmp/ssmdrives && ../../.venv/bin/python test_ssmraw.py /tmp/ssmdrives
+```
+
+The wake rule has its own test, against battery voltage traces:
+
+```sh
+cc -std=c11 -Wall -o /tmp/test_wake_rule test_wake_rule.c && /tmp/test_wake_rule
 ```
 
 The recording test runs a 36 s drive, a key-on-only session (discarded), a drive with a 5 s dropout,

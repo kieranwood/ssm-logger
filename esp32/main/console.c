@@ -8,6 +8,7 @@
 //   set <key> <value>   ssid, pass, url or token (stored on the board); OK or ERR
 //   config        CONFIG ssid=… url=… pass=set|unset token=set|unset
 //   upload        try uploading now; OK
+//   set sleep on|off, set wake_v 13.2   deep sleep while parked (power.c)
 #include "console.h"
 
 #include <dirent.h>
@@ -20,6 +21,8 @@
 #include "driver/uart_vfs.h"
 #include "config.h"
 #include "drive_log.h"
+#include "esp_timer.h"
+#include "power.h"
 #include "uploader.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -28,6 +31,9 @@
 #define UART CONFIG_ESP_CONSOLE_UART_NUM
 
 static const char *s_dir;
+static volatile int64_t s_last_input_ms = -1000000000;
+
+int64_t console_last_input_ms(void) { return s_last_input_ms; }
 static void (*s_df)(size_t *total, size_t *used);
 
 static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n)   // the same CRC-32 as zlib
@@ -142,16 +148,31 @@ static void handle(char *line)
         if (s_df) s_df(&total, &used);
         printf("DF %u %u\n", (unsigned)total, (unsigned)used);
     } else if (strcmp(line, "status") == 0) {
-        printf("STATUS %s\nUPLOAD %s\n", dl_status(), uploader_status());
+        printf("STATUS %s\nUPLOAD %s\nPOWER %s\n", dl_status(), uploader_status(), power_status());
     } else if (strcmp(line, "set") == 0 && arg) {
         char *value = strchr(arg, ' ');
         if (value) *value++ = 0;
+        if (strcmp(arg, "sleep") == 0) {
+            char why[160] = "";
+            bool on = value && strcmp(value, "on") == 0;
+            esp_err_t e = power_set_sleep(on, why, sizeof why);
+            if (e == ESP_OK) printf("OK\n");
+            else printf("ERR %s\n", why[0] ? why : esp_err_to_name(e));
+            fflush(stdout);
+            return;
+        }
+        if (strcmp(arg, "wake_v") == 0) {
+            esp_err_t e = power_set_wake_mv(value ? (int)(atof(value) * 1000 + 0.5) : 0);
+            printf(e == ESP_OK ? "OK\n" : "ERR wake_v must be between 12.5 and 15.0\n");
+            fflush(stdout);
+            return;
+        }
         esp_err_t err = config_set(arg, value ? value : "");
         if (err == ESP_OK) {
             printf("OK\n");
             uploader_kick();
         } else {
-            printf("ERR %s\n", err == ESP_ERR_NOT_FOUND ? "keys: ssid, pass, url, token" : esp_err_to_name(err));
+            printf("ERR %s\n", err == ESP_ERR_NOT_FOUND ? "keys: ssid, pass, url, token, sleep, wake_v" : esp_err_to_name(err));
         }
     } else if (strcmp(line, "config") == 0) {
         logger_config_t c;
@@ -174,6 +195,7 @@ static void console_task(void *arg)
     while (true) {
         uint8_t c;
         if (uart_read_bytes(UART, &c, 1, portMAX_DELAY) != 1) continue;
+        s_last_input_ms = esp_timer_get_time() / 1000;
         if (c == '\r' || c == '\n') {
             line[n] = 0;
             if (n) handle(line);

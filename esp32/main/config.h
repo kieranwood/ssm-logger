@@ -2,6 +2,8 @@
 // token is ever compiled into the firmware.
 #pragma once
 
+#include <stddef.h>
+
 #include "esp_err.h"
 
 typedef struct {
@@ -16,5 +18,8 @@ esp_err_t config_init(void);
 
 void config_load(logger_config_t *c);
 
-// key: ssid, pass, url or token. An empty value clears it.
+// key: ssid, pass, url or token (or power.c's sleep, wake_mv, adc_scale). An empty value clears it.
 esp_err_t config_set(const char *key, const char *value);
+
+// Read one setting as a string (empty if unset).
+esp_err_t config_get(const char *key, char *out, size_t cap);

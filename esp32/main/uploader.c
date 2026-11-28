@@ -42,6 +42,8 @@ static EventGroupHandle_t s_events;
 static int s_retries;
 static bool s_sntp_started;
 static bool s_wifi_on;
+static volatile bool s_busy;
+static volatile unsigned s_rounds;
 
 static void set_status(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void set_status(const char *fmt, ...)
@@ -53,6 +55,8 @@ static void set_status(const char *fmt, ...)
 }
 
 const char *uploader_status(void) { return s_status; }
+bool uploader_busy(void) { return s_busy; }
+unsigned uploader_rounds(void) { return s_rounds; }
 
 void uploader_kick(void)
 {
@@ -212,27 +216,26 @@ static bool upload(const logger_config_t *c, const char *name)
     return ok;
 }
 
-static void upload_task(void *arg)
+static void upload_round(void)
 {
     static char names[MAX_PENDING][32];
-    while (true) {
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CHECK_EVERY_MS));
+    {
         logger_config_t c;
         config_load(&c);
         if (!c.ssid[0]) {
             set_status("Wi-Fi not set up (set ssid / pass / url / token)");
-            continue;
+            return;
         }
         int n = pending(names, MAX_PENDING);
         bool clock_set = time(NULL) > CLOCK_SET_AFTER;
         if (!n && clock_set) {
             set_status("nothing to upload");
-            continue;
+            return;
         }
         if (!wifi_up(&c)) {
             set_status("%s not in range%s", c.ssid, n ? " - drives wait for the next try" : "");
             wifi_down();
-            continue;
+            return;
         }
         if (!s_sntp_started) {
             esp_sntp_config_t sc = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
@@ -254,6 +257,17 @@ static void upload_task(void *arg)
             set_status("nothing to upload");
         }
         wifi_down();
+    }
+}
+
+static void upload_task(void *arg)
+{
+    while (true) {
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CHECK_EVERY_MS));
+        s_busy = true;
+        upload_round();
+        s_busy = false;
+        s_rounds++;
     }
 }
 

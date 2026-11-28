@@ -2,6 +2,7 @@
 
     .venv/bin/python esp32/fetch_drives.py --port /dev/cu.wchusbserial…  [--delete] [--status]
     .venv/bin/python esp32/fetch_drives.py --port … --configure   # Wi-Fi and server, for uploading
+    .venv/bin/python esp32/fetch_drives.py --port … --set sleep=on [--set wake_v=13.2]
 
 Each drive is saved to logs/esp32/drive_NNNN.raw (checked against the board's CRC-32), then
 converted to logs/ssm_….csv with ssmraw.py. --delete removes drives from the board once they are
@@ -148,14 +149,30 @@ def main() -> int:
     ap.add_argument("--status", action="store_true", help="just show what the board is doing")
     ap.add_argument("--configure", action="store_true",
                     help="set the home Wi-Fi and log_server.py address and token (asks for each)")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                    help="change a setting: sleep=on|off, wake_v=13.2 (also ssid, url...)")
     args = ap.parse_args()
     board = Board(args.port)
     if args.configure:
         return configure(board)
+    if args.set:
+        for item in args.set:
+            key, _, value = item.partition("=")
+            reply = board.ask(f"set {key.strip()} {value.strip()}", "OK")
+            print(f"{key}: {reply}")
+            if reply != "OK":
+                return 1
+        board.command("status")
+        for ln in board.lines(1):
+            if ln.startswith("POWER "):
+                print("power:", ln[6:])
+        return 0
     print(board.ask("status", "STATUS ")[7:])
     for ln in board.lines(0.5):
         if ln.startswith("UPLOAD "):
             print("upload:", ln[7:])
+        elif ln.startswith("POWER "):
+            print("power:", ln[6:])
     total, used = (int(x) for x in board.ask("df", "DF ").split()[1:])
     print(f"storage: {used / 1e6:.2f} MB used of {total / 1e6:.2f} MB")
     files = board.ls()
