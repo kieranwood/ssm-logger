@@ -281,7 +281,8 @@ static esp_err_t command(const char *text, const char *expect, uint32_t timeout_
     esp_err_t err = write_all(out, n + payload_len);
     if (err != ESP_OK) return err;
     char cmd[24];                               // the command's first line, for error messages
-    snprintf(cmd, sizeof cmd, "%.*s", (int)strcspn(text, "\r\n"), text);
+    const char *first = text + strspn(text, "\r\n");
+    snprintf(cmd, sizeof cmd, "%.*s", (int)strcspn(first, "\r\n"), first);
     int64_t deadline = now_ms() + timeout_ms;
     while (now_ms() < deadline) {
         if (s_gone) return fail(ESP_ERR_INVALID_STATE, "OpenPort unplugged");

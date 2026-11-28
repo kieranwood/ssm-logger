@@ -1,102 +1,61 @@
-// Stage 1: connection test. Plug the OpenPort into the board's "USB" port, watch the "COM" port.
+// Stage 2: record every drive to flash.
 //
-// Over and over, every few seconds:
-//   1. wait for a USB device and open it as a serial port (prints its VID:PID and descriptors once)
-//   2. identify the OpenPort (ati) and read the OBD pin 16 voltage (atr 16)
-//   3. open the ISO15765 channel and send the SSM init (0xAA); with the ignition on the ECU answers
-//      with its ID
-//   4. if it did: read engine speed, coolant and battery voltage 100 times (the same read-only
-//      0xA8 request the logger makes) and report the samples per second
-// and print a one-line RESULT you can paste back.
+// Waits for the ECU (ignition on), records every parameter it supports as raw SSM replies until the
+// ignition goes off, and keeps the drive if the engine ran (drive_log.c). Drives are read off the
+// board over the COM port with fetch_drives.py (console.c) until Wi-Fi upload arrives in stage 3.
+// (The stage 1 connection test is in git history: commit 39f2986.)
 #include <stdio.h>
-#include <string.h>
 
+#include "console.h"
+#include "drive_log.h"
+#include "esp_littlefs.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "openport.h"
 
-static const char *TAG = "test";
+static const char *TAG = "main";
 
-#define SSM_ECU_INIT 0xAA
-#define SSM_READ_ADDRESSES 0xA8
-#define SSM_READ_REPLY 0xE8
+#define LOG_DIR "/logs"
+#define LOG_PARTITION "logs"
 
-static void run_once(bool *descriptors_shown)
+static void df(size_t *total, size_t *used)
 {
-    ESP_LOGI(TAG, "Waiting for the OpenPort on the USB port...");
-    if (op_open(5000) != ESP_OK) {
-        printf("RESULT: FAIL usb - %s\n", op_last_error());
-        return;
-    }
-    bool expected = op_vid() == OPENPORT_VID && (op_pid() == OPENPORT_PID || op_pid() == OPENPORT_PID_ALT);
-    ESP_LOGI(TAG, "Opened USB device %04x:%04x%s", op_vid(), op_pid(),
-             expected ? " (OpenPort 2.0)" : " - not an OpenPort ID (0403:cc4c or cc4d)");
-    if (!*descriptors_shown) {
-        op_print_descriptors();
-        *descriptors_shown = true;
-    }
-    ESP_LOGI(TAG, "OpenPort says: %s", op_firmware());
+    *total = *used = 0;
+    esp_littlefs_info(LOG_PARTITION, total, used);
+}
 
-    int mv = 0;
-    if (op_battery_mv(&mv) != ESP_OK) {
-        printf("RESULT: FAIL voltage - %s\n", op_last_error());
-        op_close();
-        return;
-    }
-    ESP_LOGI(TAG, "OBD pin 16 (car battery): %.2f V", mv / 1000.0);
-
-    if (op_connect_can() != ESP_OK) {
-        printf("RESULT: FAIL can - %s (OpenPort OK, %.2f V)\n", op_last_error(), mv / 1000.0);
-        op_close();
-        return;
-    }
-    uint8_t reply[300];
-    const uint8_t init = SSM_ECU_INIT;
-    int n = op_request(&init, 1, reply, sizeof reply, 2000);
-    if (n < 9 || reply[0] != 0xEA) {
-        printf("RESULT: PARTIAL OpenPort OK (%s, %.2f V), no ECU reply - is the ignition on? (%s)\n",
-               op_firmware(), mv / 1000.0, n < 0 ? op_last_error() : "unexpected reply");
-        op_close();
-        return;
-    }
-    // init = reply[1:]; ECU ID = init[3:8]
-    char ecu[11];
-    for (int i = 0; i < 5; i++) sprintf(ecu + 2 * i, "%02X", reply[4 + i]);
-    ESP_LOGI(TAG, "ECU %s answered (%d bytes of capabilities)", ecu, n - 1);
-
-    // Engine speed (0x0E-0x0F, /4 rpm), coolant (0x08, -40 C), battery (0x1C, *8/100 V)
-    const uint8_t read[] = {SSM_READ_ADDRESSES, 0x00, 0, 0, 0x0E, 0, 0, 0x0F, 0, 0, 0x08, 0, 0, 0x1C};
-    int ok = 0;
-    int64_t t0 = esp_timer_get_time();
-    for (int i = 0; i < 100; i++) {
-        n = op_request(read, sizeof read, reply, sizeof reply, 500);
-        if (n != 5 || reply[0] != SSM_READ_REPLY) continue;
-        ok++;
-        if (i % 20 == 0) {
-            ESP_LOGI(TAG, "engine %.0f rpm, coolant %d C, battery %.2f V",
-                     (reply[1] << 8 | reply[2]) / 4.0, reply[3] - 40, reply[4] * 8 / 100.0);
-        }
-    }
-    double secs = (esp_timer_get_time() - t0) / 1e6;
-    printf("RESULT: PASS ECU %s, %s, %.2f V, %d/100 reads, %.1f reads/s, %lu bytes dropped, %lu resyncs\n",
-           ecu, op_firmware(), mv / 1000.0, ok, ok / secs, (unsigned long)op_rx_overflows(),
-           (unsigned long)op_resyncs());
-    op_close();
+static size_t free_bytes(void)
+{
+    size_t total, used;
+    df(&total, &used);
+    return total > used ? total - used : 0;
 }
 
 void app_main(void)
 {
-    printf("\nssm-esp32 stage 1: OpenPort connection test\n"
-           "Plug the OpenPort into the board's USB port (not COM). Read-only: nothing is written to the ECU.\n\n");
-    if (op_usb_start() != ESP_OK) {
-        printf("RESULT: FAIL setup - %s\n", op_last_error());
+    printf("\nssm-esp32 stage 2: drive logger (read-only: nothing is written to the ECU)\n");
+    const esp_vfs_littlefs_conf_t fs = {
+        .base_path = LOG_DIR,
+        .partition_label = LOG_PARTITION,
+        .format_if_mount_failed = true,
+    };
+    esp_err_t err = esp_vfs_littlefs_register(&fs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Could not mount the log partition: %s", esp_err_to_name(err));
         return;
     }
-    bool descriptors_shown = false;
+    size_t total, used;
+    df(&total, &used);
+    ESP_LOGI(TAG, "Log storage: %u kB used of %u kB", (unsigned)(used / 1024), (unsigned)(total / 1024));
+
+    console_start(LOG_DIR, df);
+    if (op_usb_start() != ESP_OK) {
+        ESP_LOGE(TAG, "USB host: %s", op_last_error());
+        return;
+    }
+    dl_init(LOG_DIR, free_bytes);
     while (true) {
-        run_once(&descriptors_shown);
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        if (!dl_step()) vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }

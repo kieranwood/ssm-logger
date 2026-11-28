@@ -1,0 +1,6 @@
+# 8 MB flash (YD-ESP32-S3 N8R2): 1.5 MB for the app, the rest (6.4 MB) for drives.
+# Name,   Type, SubType,  Offset,   Size
+nvs,      data, nvs,      0x9000,   0x6000
+phy_init, data, phy,      0xf000,   0x1000
+factory,  app,  factory,  0x10000,  0x180000
+logs,     data, spiffs,   0x190000, 0x670000

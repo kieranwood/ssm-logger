@@ -215,7 +215,8 @@ The cable is found by its USB ID (`0403:cc4c` or `0403:cc4d`), falling back to `
 | `car_logger.py` | Headless logger for a Pi in the car: records each drive, uploads it at home, optional power-off |
 | `log_server.py` | Receives the car logger's uploads (standard library only) |
 | `pi/` | Pi installer, `car_logger.toml` example, systemd units |
-| `esp32/` | ESP32-S3 version of the car logger (in progress: stage 1, the OpenPort connection test). See [esp32/README.md](esp32/README.md) |
+| `esp32/` | ESP32-S3 version of the car logger (in progress: stage 2, recording drives to flash). See [esp32/README.md](esp32/README.md) |
+| `ssmraw.py` | Converts the ESP32 logger's raw drive files to the logger's CSV |
 | `probe.py` | Proof-of-concept connection test; `--listen` records the raw CAN traffic (transmits nothing) |
 | `web/` | Browser version: viewer, live logging over Web Serial (`openport.js`, `live.js`), demo ECU (`fake-ecu.js`), Python glue (`webapp.py`). Deployed to GitHub Pages by `.github/workflows/pages.yml`. Styling in `style.css` (dark and light themes); bundled fonts in `web/fonts/` (Space Grotesk and JetBrains Mono, both SIL Open Font License) |
 | `sdcard/logcfg.txt` | OpenPort standalone (SD card) logging config for the 2012 Forester |
