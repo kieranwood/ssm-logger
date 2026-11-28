@@ -1,0 +1,29 @@
+# car_logger.py settings. Copied to car_logger.toml (next to car_logger.py) by pi/install.sh.
+# Every setting is optional; these are the defaults apart from url and token.
+
+[server]
+# log_server.py on your home network. Use an address the Pi can reach on your Wi-Fi:
+# a fixed IP (reserve one in your router) or a .local name.
+url = "http://192.168.1.20:8765"
+# The same token log_server.py was started with. Make one with:
+#   python3 -c 'import secrets; print(secrets.token_urlsafe(24))'
+token = "change-me"
+
+[logging]
+dir = "logs"              # relative to car_logger.py
+end_after_s = 15          # ECU silent this long: the drive is over (ignition off)
+min_engine_s = 10         # recordings where the engine ran for less are thrown away
+keep_uploaded_days = 30   # local copies of uploaded drives are deleted after this...
+min_free_mb = 500         # ...or sooner, oldest first, if free space falls below this
+
+[power]
+# Power the Pi off when there's nothing left to do. Only turn this on if something will
+# switch it back on for the next drive (see docs/car-logger.md, "Power").
+shutdown = false
+shutdown_cmd = ["sudo", "-n", "systemctl", "poweroff"]
+linger_s = 120            # stay on this long after a drive once everything is uploaded
+give_up_s = 900           # ...or this long if the server can't be reached (not home)
+low_battery_v = 11.8      # ignition off and the car battery below this: power off at once
+
+[ecu]
+port = ""                 # OpenPort device; empty: found by its USB ID

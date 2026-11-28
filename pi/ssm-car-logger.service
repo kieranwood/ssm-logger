@@ -1,0 +1,16 @@
+# Installed by pi/install.sh (which fills in @USER@ and @REPO@).
+[Unit]
+Description=SSM drive logger (car_logger.py)
+After=local-fs.target
+
+[Service]
+User=@USER@
+WorkingDirectory=@REPO@
+ExecStart=/usr/bin/python3 @REPO@/car_logger.py
+Restart=always
+RestartSec=5
+# Time to close the drive being recorded when the Pi shuts down
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -3,3 +3,10 @@ logs/
 __pycache__/
 .DS_Store
 definitions/
+car_logger.toml
+esp32/build/
+esp32/managed_components/
+esp32/sdkconfig
+esp32/sdkconfig.old
+esp32/dependencies.lock
+esp32/.cache/

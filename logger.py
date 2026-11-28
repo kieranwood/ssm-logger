@@ -23,7 +23,6 @@ cursor line shows every channel's value in the list on the left.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import sys
 import time
@@ -42,7 +41,7 @@ import dtc
 import guided
 import report
 import recording
-from recording import Channel
+from recording import CsvRecorder, build_channels
 from sources import DemoSource, EcuSource, Source
 
 HISTORY_ROWS = 80_000        # live history kept in memory (~1 hour at 22 samples/s)
@@ -61,42 +60,6 @@ COLORS = ["#4e9fff", "#ff8a3d", "#3ecf8e", "#e5484d", "#b97cff", "#f5c542",
 
 
 from html import escape as html_escape
-
-
-def build_channels(params: list[defs.Parameter]) -> list[Channel]:
-    chans = [Channel(p.name, p.units, min(p.decimals, 3), p.switch,
-                     (lambda n: lambda v: v[n])(p.name)) for p in params]
-    names = {p.name for p in params}
-    derived = []
-    if {"Air/Fuel Correction #1", "Air/Fuel Learning #1"} <= names:
-        derived.append(Channel("Total Fuel Trim", "%", 2, False,
-                               lambda v: v["Air/Fuel Correction #1"] + v["Air/Fuel Learning #1"]))
-    if "Air/Fuel Sensor #1" in names:
-        derived.append(Channel("Air/Fuel Sensor #1 AFR", "AFR", 2, False,
-                               lambda v: v["Air/Fuel Sensor #1"] * 14.7))
-    return derived + chans
-
-
-class CsvRecorder:
-    def __init__(self, channels: list[Channel], ecu_id: str):
-        LOG_DIR.mkdir(exist_ok=True)
-        self.path = LOG_DIR / time.strftime("ssm_%Y%m%d_%H%M%S.csv")
-        self.f = open(self.path, "w", newline="")
-        self.w = csv.writer(self.f)
-        self.f.write(f"# ECU {ecu_id}\n")
-        self.w.writerow(["time_s", "mark"] + [c.label for c in channels])
-        self.t_start: float | None = None
-        self.rows = 0
-
-    def write(self, t: float, values: list[float], mark: int | None) -> None:
-        if self.t_start is None:
-            self.t_start = t
-        self.w.writerow([f"{t - self.t_start:.3f}", mark or ""] +
-                        [f"{v:.4g}" for v in values])
-        self.rows += 1
-
-    def close(self) -> None:
-        self.f.close()
 
 
 class SeriesBuffer:
@@ -1614,7 +1577,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---------------------------------------------------------------- live actions
     def _toggle_record(self, on: bool) -> None:
         if on:
-            self.recorder = CsvRecorder(self.channels, self.source.ecu_id)
+            self.recorder = CsvRecorder(self.channels, self.source.ecu_id, LOG_DIR)
             self.rec_btn.setText("■ Stop")
             self.rec_btn.setStyleSheet("background:#e5484d;color:white;")
         elif self.recorder:

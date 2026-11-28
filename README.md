@@ -103,6 +103,9 @@ while the rear O2 sensor reads rich. Replacing the front A/F sensor fixed it.*
   timing, slowed right down, with a crank-angle scrubber. Misfire counts come from the ECU's roughness
   monitor channels; a cylinder reading above zero is drawn without a burn.
 - **Log review** of saved recordings, including CSVs from the OpenPort's own SD-card logging.
+- **Car logger** (`car_logger.py`): a Raspberry Pi left in the car with the OpenPort records every drive
+  and uploads it to `log_server.py` on your home network when the car gets home, then can power itself
+  off. Setup, Pi choice and power options are in [docs/car-logger.md](docs/car-logger.md).
 
 ## Browser version
 
@@ -174,6 +177,10 @@ or pass `--defs` to `logger.py`. An existing RomRaider checkout at
 .venv/bin/python probe.py [--debug]         # minimal connection test
 .venv/bin/python probe.py --listen [SECONDS] # listen-only: what's on the CAN bus at the OBD port
 .venv/bin/python probe.py --listen 30 --with-ssm   # ...plus known SSM values, matched to CAN bytes
+
+python3 car_logger.py                      # on a Pi in the car: log every drive (docs/car-logger.md)
+python3 car_logger.py --demo               # simulated drives, to test uploading
+python3 log_server.py --dir ~/car-logs --token SECRET   # at home: receive the uploads
 ```
 
 ## Platforms
@@ -184,7 +191,7 @@ or pass `--defs` to `logger.py`. An existing RomRaider checkout at
 | Linux | Should work, untested on a car. The cable usually appears as `/dev/ttyACM0`. If you get "permission denied", add yourself to the serial group and log in again: `sudo usermod -aG dialout $USER` (`uucp` on Arch). |
 | Windows | Not supported for talking to the car: Tactrix's Windows driver normally takes over the cable and expects programs to use its J2534 interface. Demo mode, log review and `analyse.py` work. |
 
-The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmodem*` (macOS) and
+The cable is found by its USB ID (`0403:cc4c` or `0403:cc4d`), falling back to `/dev/cu.usbmodem*` (macOS) and
 `/dev/ttyACM*` (Linux). `--port` overrides it on `logger.py`, `dtc.py` and `probe.py`.
 
 ## Files
@@ -205,6 +212,10 @@ The cable is found by its USB ID (`0403:cc4c`), falling back to `/dev/cu.usbmode
 | `gauge_view.py` | The desktop gauge view (Qt); the browser's is `web/gauges.js` |
 | `profiles.py` | Engine profiles: the engine-specific thresholds, and auto-detection |
 | `recording.py` | Loads logger CSVs and OpenPort SD-card CSVs |
+| `car_logger.py` | Headless logger for a Pi in the car: records each drive, uploads it at home, optional power-off |
+| `log_server.py` | Receives the car logger's uploads (standard library only) |
+| `pi/` | Pi installer, `car_logger.toml` example, systemd units |
+| `esp32/` | ESP32-S3 version of the car logger (in progress: stage 1, the OpenPort connection test). See [esp32/README.md](esp32/README.md) |
 | `probe.py` | Proof-of-concept connection test; `--listen` records the raw CAN traffic (transmits nothing) |
 | `web/` | Browser version: viewer, live logging over Web Serial (`openport.js`, `live.js`), demo ECU (`fake-ecu.js`), Python glue (`webapp.py`). Deployed to GitHub Pages by `.github/workflows/pages.yml`. Styling in `style.css` (dark and light themes); bundled fonts in `web/fonts/` (Space Grotesk and JetBrains Mono, both SIL Open Font License) |
 | `sdcard/logcfg.txt` | OpenPort standalone (SD card) logging config for the 2012 Forester |

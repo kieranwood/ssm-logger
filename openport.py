@@ -80,7 +80,7 @@ def _describe_error(line: str) -> str:
 
 
 # Tactrix OpenPort 2.0 USB ID (an FTDI-assigned vendor/product pair).
-OPENPORT_USB_IDS = {(0x0403, 0xCC4C)}
+OPENPORT_USB_IDS = {(0x0403, 0xCC4C), (0x0403, 0xCC4D)}   # cc4d: seen on firmware 1.17.4877
 # Fallback device names when the USB ID isn't reported: macOS, Linux.
 FALLBACK_PATTERNS = ("/dev/cu.usbmodem*", "/dev/ttyACM*")
 

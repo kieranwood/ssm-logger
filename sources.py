@@ -85,13 +85,15 @@ class EcuSource(Source):
         super().__init__()
         self.port = port
         self.all_params = defs.load(defs_path)
+        self.obd_volts: float | None = None      # OBD supply voltage at the last connection attempt
 
     def _connect(self) -> OpenPort:
         self.status = "Connecting to OpenPort"
+        self.obd_volts = None
         op = OpenPort(self.port)
         try:
             op.open()
-            volts = op.battery_voltage()
+            volts = self.obd_volts = op.battery_voltage()
             self.status = f"Connecting to ECU (OBD {volts:.1f} V)"
             op.connect_can()
             reply = op.request(SSM_ECU_INIT, timeout=2.0)

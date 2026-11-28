@@ -1,0 +1,17 @@
+# Optional: run log_server.py as a service on the machine that receives the drives (Linux).
+# Edit the paths, user and token, then:
+#   sudo cp pi/ssm-log-server.service /etc/systemd/system/
+#   sudo systemctl enable --now ssm-log-server
+[Unit]
+Description=Receives drive recordings from car_logger.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=youruser
+Environment=SSM_UPLOAD_TOKEN=change-me
+ExecStart=/usr/bin/python3 /home/youruser/ssm-logger/log_server.py --dir /home/youruser/car-logs
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

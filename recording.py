@@ -5,11 +5,15 @@ from __future__ import annotations
 import csv
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import defs
 
 
 @dataclass
@@ -23,6 +27,51 @@ class Channel:
     @property
     def label(self) -> str:
         return f"{self.name} ({self.units})" if self.units else self.name
+
+
+def build_channels(params: list[defs.Parameter]) -> list[Channel]:
+    """The logged channels: derived ones first, then every supported parameter."""
+    chans = [Channel(p.name, p.units, min(p.decimals, 3), p.switch,
+                     (lambda n: lambda v: v[n])(p.name)) for p in params]
+    names = {p.name for p in params}
+    derived = []
+    if {"Air/Fuel Correction #1", "Air/Fuel Learning #1"} <= names:
+        derived.append(Channel("Total Fuel Trim", "%", 2, False,
+                               lambda v: v["Air/Fuel Correction #1"] + v["Air/Fuel Learning #1"]))
+    if "Air/Fuel Sensor #1" in names:
+        derived.append(Channel("Air/Fuel Sensor #1 AFR", "AFR", 2, False,
+                               lambda v: v["Air/Fuel Sensor #1"] * 14.7))
+    return derived + chans
+
+
+class CsvRecorder:
+    """Writes a recording in the logger's CSV format (read back by load_csv).
+
+    The file is directory/ssm_YYYYMMDD_HHMMSS.csv unless `path` names it.
+    """
+
+    def __init__(self, channels: list[Channel], ecu_id: str, directory: Path, path: Path | None = None):
+        directory.mkdir(parents=True, exist_ok=True)
+        self.path = path or directory / time.strftime("ssm_%Y%m%d_%H%M%S.csv")
+        self.f = open(self.path, "w", newline="")
+        self.w = csv.writer(self.f)
+        self.f.write(f"# ECU {ecu_id}\n")
+        self.w.writerow(["time_s", "mark"] + [c.label for c in channels])
+        self.t_start: float | None = None
+        self.rows = 0
+
+    def write(self, t: float, values: list[float], mark: int | None) -> None:
+        if self.t_start is None:
+            self.t_start = t
+        self.w.writerow([f"{t - self.t_start:.3f}", mark or ""] +
+                        [f"{v:.4g}" for v in values])
+        self.rows += 1
+
+    def flush(self) -> None:
+        self.f.flush()
+
+    def close(self) -> None:
+        self.f.close()
 
 
 # Column names used in the SD-card logcfg.txt -> (logger channel name, units)
