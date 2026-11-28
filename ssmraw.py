@@ -62,8 +62,9 @@ def parse(data: bytes) -> RawDrive:
     return RawDrive(init, addresses, start, samples, truncated=pos != len(data))
 
 
-def to_csv(drive: RawDrive, out_dir: Path, stem: str, defs_path=None) -> Path:
-    """Write the drive as out_dir/ssm_<start time or stem>.csv; returns the path."""
+def to_csv(drive: RawDrive, out_dir: Path, stem: str, defs_path=None, unique: bool = False) -> Path:
+    """Write the drive as out_dir/ssm_<start time or stem>.csv; returns the path.
+    unique: never overwrite an existing CSV (add _2, _3...) - otherwise it's replaced."""
     params = [p for p in defs.load(defs_path) if p.supported_by(drive.init)]
     have = set(drive.addresses)
     usable = [p for p in params if all(a in have for a in p.addresses())]
@@ -77,6 +78,10 @@ def to_csv(drive: RawDrive, out_dir: Path, stem: str, defs_path=None) -> Path:
     name = (time.strftime("ssm_%Y%m%d_%H%M%S", time.localtime(drive.start_unix)) if drive.start_unix
             else f"ssm_{stem}")
     path = out_dir / f"{name}.csv"
+    n = 2
+    while unique and path.exists():
+        path = out_dir / f"{name}_{n}.csv"
+        n += 1
     rec = CsvRecorder(channels, drive.ecu_id, out_dir, path=path)
     try:
         for t, data in drive.samples:

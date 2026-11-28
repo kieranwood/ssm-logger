@@ -5,12 +5,17 @@
 
 Endpoints (each needs "Authorization: Bearer <token>"):
     GET /health              200 "ok" - the car checks this to see if it's home
-    PUT /upload/<name>.csv   gzip-compressed CSV with X-Content-SHA256 (of the uncompressed file);
-                             replies {"saved_as": ..., "sha256": ...}
+    PUT /upload/<name>.csv   a CSV from car_logger.py (gzip-compressed) with X-Content-SHA256 (of the
+                             uncompressed file); replies {"saved_as": ..., "sha256": ...}
+    PUT /upload/<name>.raw   a raw drive from the ESP32 logger (esp32/): kept in raw/ and converted to a
+                             CSV beside the others with ssmraw.py (after replying)
 
 A file is written under a temporary name and renamed when complete, so a half-received upload
 never looks like a recording. Sending the same file twice is harmless; a different file with a
 name already taken is saved as name_2.csv. Plain HTTP: meant for a home network, not the internet.
+
+Converting .raw drives needs numpy and RomRaider's definitions (fetch_defs.py) on this computer, as the
+desktop logger does. Without them the raw file is still kept, to convert later with ssmraw.py.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.csv$")
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.(csv|raw)$")
 MAX_UPLOAD = 1 << 30            # 1 GB compressed or not: hours of driving at ~45 MB an hour
 
 
@@ -73,7 +78,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         name = m.group(1)
         if not NAME.match(name):
-            return self._reply(400, "file name must be letters, digits, _ . - and end in .csv")
+            return self._reply(400, "file name must be letters, digits, _ . - and end in .csv or .raw")
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
@@ -89,13 +94,34 @@ class Handler(BaseHTTPRequestHandler):
             got = self._receive(tmp, length, self.headers.get("Content-Encoding", "") == "gzip")
             if got != want:
                 return self._reply(422, "checksum mismatch - the upload was damaged")
-            saved = self._place(tmp, name, got)
+            is_raw = name.endswith(".raw")
+            saved, new = self._place(tmp, name, got, self.out_dir / "raw" if is_raw else self.out_dir)
         except (ValueError, EOFError, OSError, zlib.error) as e:
             return self._reply(400, f"upload failed: {e}")
         finally:
             tmp.unlink(missing_ok=True)
-        self.log_message("received %s (%s)", saved.name, f"{saved.stat().st_size / 1e6:.1f} MB")
+        self.log_message("received %s (%s)%s", saved.name, f"{saved.stat().st_size / 1e6:.1f} MB",
+                         "" if new else " - already had it")
+        # Reply as soon as the file is safe, then convert: a long drive takes a while, and the
+        # logger shouldn't time out (and send it again) waiting for that.
         self._reply(201, {"saved_as": saved.name, "sha256": got})
+        if is_raw and new:
+            self._convert(saved)
+
+    def _convert(self, raw: Path) -> str | None:
+        """Turn a raw ESP32 drive into a CSV beside the others; None (and a log line) if it can't."""
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import ssmraw
+            drive = ssmraw.parse(raw.read_bytes())
+            csv = ssmraw.to_csv(drive, self.out_dir, raw.stem, unique=True)
+        except Exception as e:                       # keep the raw file whatever goes wrong
+            self.log_message("could not convert %s (%s) - it is kept in raw/; convert it later with "
+                             "ssmraw.py", raw.name, e)
+            return None
+        self.log_message("converted %s -> %s (%d samples, %.1f min)", raw.name, csv.name, len(drive.samples),
+                         drive.samples[-1][0] / 60 if drive.samples else 0)
+        return csv.name
 
     def _receive(self, tmp: Path, length: int, gzipped: bool) -> str:
         """Write the body (uncompressed) to tmp; return its SHA-256."""
@@ -122,19 +148,21 @@ class Handler(BaseHTTPRequestHandler):
             os.fsync(f.fileno())
         return h.hexdigest()
 
-    def _place(self, tmp: Path, name: str, digest: str) -> Path:
-        """Move tmp into place as name, name_2, ... - or keep the existing copy if identical."""
-        stem, n = name[:-4], 1
+    def _place(self, tmp: Path, name: str, digest: str, where: Path) -> tuple[Path, bool]:
+        """Move tmp into where as name, name_2, ... - or keep the existing copy if identical.
+        Returns the file and whether it is new."""
+        where.mkdir(exist_ok=True)
+        stem, ext, n = name[:-4], name[-4:], 1
         while True:
-            dest = self.out_dir / (name if n == 1 else f"{stem}_{n}.csv")
+            dest = where / (name if n == 1 else f"{stem}_{n}{ext}")
             if not dest.exists():
                 try:
                     os.link(tmp, dest)            # fails if another upload took the name meanwhile
                 except FileExistsError:
                     continue
-                return dest
+                return dest, True
             if sha256(dest) == digest:
-                return dest
+                return dest, False
             n += 1
 
 

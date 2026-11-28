@@ -89,16 +89,30 @@ card. With B and C, the logger powers the Pi off cleanly first.
 
 ### On the home server
 
-Any computer on your network with Python 3 (a NAS, a Linux box, a Mac that stays awake):
+On an always-on Linux machine (Ubuntu, Debian, a NAS running one), from a copy of this repo:
+
+```sh
+sh pi/install-server.sh                  # or: sh pi/install-server.sh /path/to/drives 8765
+```
+
+That installs `python3-numpy`, which converting the ESP32's raw drives needs, and downloads the
+RomRaider definitions. It then makes a token, keeps it in `/etc/ssm-log-server.env` (root-only),
+installs `log_server.py` as the `ssm-log-server` service, and prints the `url` and `token` to give
+the loggers. Drives go to `~/car-logs` by default: CSVs at the top, and the ESP32's raw files in
+`raw/`. Watch it with `journalctl -u ssm-log-server -f`. If `ufw` is on, the script prints the rule to
+let the loggers in.
+
+Reserve the server's IP in your router, so the address the loggers were given keeps working.
+
+Without the installer, on any computer with Python 3.10 or newer:
 
 ```sh
 python3 -c 'import secrets; print(secrets.token_urlsafe(24))'    # make a token
 python3 log_server.py --dir ~/car-logs --token THE_TOKEN          # port 8765 by default
 ```
 
-Give it a fixed address: reserve an IP for it in your router, or use its `.local` name.
-`pi/ssm-log-server.service` is a systemd unit for running it as a service on Linux. The server is
-plain HTTP with a shared token, which is fine on a home network; don't expose it to the internet.
+The server is plain HTTP with a shared token, which is fine on a home network. Don't expose it to the
+internet.
 
 ### On the Pi
 

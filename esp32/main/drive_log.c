@@ -28,6 +28,7 @@ static const char *TAG = "drive";
 #define ENGINE_RUNNING_RPM 300
 #define FLUSH_MS 1000                 // at most this much is lost if the power goes
 #define LOW_SPACE_BYTES (32 * 1024)
+#define CLOCK_SET_AFTER 1600000000     // time() past this (Sept 2020): the clock has been set
 #define PATH_LEN 460                  // folder (up to 199) + '/' + file name (up to 255)
 
 static char s_dir[200];
@@ -148,18 +149,36 @@ static bool flush(FILE *f)
     return fflush(f) == 0 && fsync(fileno(f)) == 0;
 }
 
+// The next drive number. It keeps counting up after uploaded drives are deleted (remembered in
+// <dir>/next_drive), so the same number never names two drives on the server.
 static int next_number(void)
 {
     int best = 0;
     DIR *d = opendir(s_dir);
-    if (!d) return 1;
-    struct dirent *e;
-    while ((e = readdir(d))) {
-        int n;
-        if (sscanf(e->d_name, "drive_%d.", &n) == 1 && n > best) best = n;
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d))) {
+            int n;
+            if (sscanf(e->d_name, "drive_%d.", &n) == 1 && n > best) best = n;
+        }
+        closedir(d);
     }
-    closedir(d);
-    return best + 1;
+    char path[PATH_LEN];
+    snprintf(path, sizeof path, "%s/next_drive", s_dir);
+    int saved = 0;
+    FILE *f = fopen(path, "r");
+    if (f) {
+        if (fscanf(f, "%d", &saved) != 1) saved = 0;
+        fclose(f);
+    }
+    int num = best + 1 > saved ? best + 1 : saved;
+    if ((f = fopen(path, "w"))) {
+        fprintf(f, "%d\n", num + 1);
+        fflush(f);
+        fsync(fileno(f));
+        fclose(f);
+    }
+    return num;
 }
 
 // How long the engine ran in a recording (from its Engine Speed bytes); false if unreadable.
@@ -272,7 +291,9 @@ static void record_drive(void)
     hl += 2;
     for (int j = 0; j < S.n_addr; j++, hl += 4) put_u32(h + hl, S.addr[j]);
     time_t wall = time(NULL);
-    put_u32(h + hl, wall > 1600000000 ? (uint32_t)wall : 0);   // 0 until the clock has been set
+    bool have_start = wall > CLOCK_SET_AFTER;
+    const long start_pos = hl;
+    put_u32(h + hl, have_start ? (uint32_t)wall : 0);   // 0 until the clock has been set (Wi-Fi)
     hl += 4;
     s_buf_len = 0;
     bool ok = fwrite(h, 1, hl, f) == hl && flush(f);
@@ -304,6 +325,14 @@ static void record_drive(void)
                     break;
                 }
                 last_flush = now;
+                if (!have_start && time(NULL) > CLOCK_SET_AFTER) {
+                    // The clock was set during the drive (home Wi-Fi in range): fill in the start time.
+                    uint8_t st[4];
+                    put_u32(st, (uint32_t)(time(NULL) - (now - t0) / 1000));
+                    have_start = fseek(f, start_pos, SEEK_SET) == 0 && fwrite(st, 1, 4, f) == 4;
+                    fseek(f, 0, SEEK_END);
+                    if (have_start) ESP_LOGI(TAG, "Clock set: %s start time filled in", part);
+                }
                 if (s_free_bytes && s_free_bytes() < LOW_SPACE_BYTES) {
                     ESP_LOGE(TAG, "Flash full - ending the drive");
                     break;

@@ -1,6 +1,7 @@
-"""Copy recorded drives off the ESP32 over its COM port and convert them to logger CSVs.
+"""Copy recorded drives off the ESP32 over its COM port and convert them to logger CSVs, or set it up.
 
     .venv/bin/python esp32/fetch_drives.py --port /dev/cu.wchusbserial…  [--delete] [--status]
+    .venv/bin/python esp32/fetch_drives.py --port … --configure   # Wi-Fi and server, for uploading
 
 Each drive is saved to logs/esp32/drive_NNNN.raw (checked against the board's CRC-32), then
 converted to logs/ssm_….csv with ssmraw.py. --delete removes drives from the board once they are
@@ -31,7 +32,7 @@ class Board:
         self.ser.port, self.ser.baudrate, self.ser.timeout = port, BAUD, 0.5
         self.ser.dtr = self.ser.rts = False          # don't reset the board when opening
         self.ser.open()
-        time.sleep(0.1)
+        time.sleep(1.5)        # opening the port resets the board: let it boot before talking to it
         self.ser.reset_input_buffer()
 
     def lines(self, timeout: float):
@@ -116,14 +117,43 @@ class Board:
         raise OSError(f"{name}: too many damaged lines - try again")
 
 
+def configure(board: Board) -> int:
+    """Ask for the settings and store them on the board (in its NVS, not in the firmware)."""
+    import getpass
+    print("Current:", board.ask("config", "CONFIG ")[7:])
+    print("Press Enter to keep a setting as it is.")
+    values = {
+        "ssid": input("Home Wi-Fi name: ").strip(),
+        "pass": getpass.getpass("Wi-Fi password (not shown): "),
+        "url": input("log_server.py address, e.g. http://192.168.1.20:8765: ").strip(),
+        "token": getpass.getpass("log_server.py token (not shown): ").strip(),
+    }
+    for key, value in values.items():
+        if value:
+            reply = board.ask(f"set {key} {value}", "OK")
+            if reply != "OK":
+                print(f"{key}: {reply}")
+                return 1
+    print("Now:", board.ask("config", "CONFIG ")[7:])
+    print("It will try uploading within 30 s; --status shows how it went.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", required=True, help="the board's COM port, e.g. /dev/cu.wchusbserial…")
     ap.add_argument("--delete", action="store_true", help="delete drives from the board once copied")
     ap.add_argument("--status", action="store_true", help="just show what the board is doing")
+    ap.add_argument("--configure", action="store_true",
+                    help="set the home Wi-Fi and log_server.py address and token (asks for each)")
     args = ap.parse_args()
     board = Board(args.port)
+    if args.configure:
+        return configure(board)
     print(board.ask("status", "STATUS ")[7:])
+    for ln in board.lines(0.5):
+        if ln.startswith("UPLOAD "):
+            print("upload:", ln[7:])
     total, used = (int(x) for x in board.ask("df", "DF ").split()[1:])
     print(f"storage: {used / 1e6:.2f} MB used of {total / 1e6:.2f} MB")
     files = board.ls()

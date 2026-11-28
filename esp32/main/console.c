@@ -4,7 +4,10 @@
 //                 (ABORT <name> if the computer sends anything meanwhile)
 //   rm <name>     OK, or ERR <why>
 //   df            DF <total bytes> <used bytes>
-//   status        STATUS <what the logger is doing>
+//   status        STATUS <what the logger is doing>, UPLOAD <what the uploader is doing>
+//   set <key> <value>   ssid, pass, url or token (stored on the board); OK or ERR
+//   config        CONFIG ssid=… url=… pass=set|unset token=set|unset
+//   upload        try uploading now; OK
 #include "console.h"
 
 #include <dirent.h>
@@ -15,7 +18,9 @@
 
 #include "driver/uart.h"
 #include "driver/uart_vfs.h"
+#include "config.h"
 #include "drive_log.h"
+#include "uploader.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mbedtls/base64.h"
@@ -137,16 +142,34 @@ static void handle(char *line)
         if (s_df) s_df(&total, &used);
         printf("DF %u %u\n", (unsigned)total, (unsigned)used);
     } else if (strcmp(line, "status") == 0) {
-        printf("STATUS %s\n", dl_status());
+        printf("STATUS %s\nUPLOAD %s\n", dl_status(), uploader_status());
+    } else if (strcmp(line, "set") == 0 && arg) {
+        char *value = strchr(arg, ' ');
+        if (value) *value++ = 0;
+        esp_err_t err = config_set(arg, value ? value : "");
+        if (err == ESP_OK) {
+            printf("OK\n");
+            uploader_kick();
+        } else {
+            printf("ERR %s\n", err == ESP_ERR_NOT_FOUND ? "keys: ssid, pass, url, token" : esp_err_to_name(err));
+        }
+    } else if (strcmp(line, "config") == 0) {
+        logger_config_t c;
+        config_load(&c);
+        printf("CONFIG ssid=%s url=%s pass=%s token=%s\n", c.ssid, c.url, c.pass[0] ? "set" : "unset",
+               c.token[0] ? "set" : "unset");
+    } else if (strcmp(line, "upload") == 0) {
+        uploader_kick();
+        printf("OK\n");
     } else {
-        printf("ERR commands: ls, get NAME, rm NAME, df, status\n");
+        printf("ERR commands: ls, get NAME, rm NAME, df, status, set KEY VALUE, config, upload\n");
     }
     fflush(stdout);
 }
 
 static void console_task(void *arg)
 {
-    char line[128];
+    char line[256];
     size_t n = 0;
     while (true) {
         uint8_t c;

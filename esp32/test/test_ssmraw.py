@@ -18,7 +18,7 @@ params = [p for p in defs.load() if p.supported_by(DEMO_INIT)]
 want = defs.request_addresses(params)
 out = Path(tempfile.mkdtemp())
 for name, samples, truncated, gap in (("drive_0001.raw", 800, False, False),
-                                      ("drive_0002.raw", 600, False, True),
+                                      ("drive_0003.raw", 600, False, True),
                                       ("drive_0009.raw", 799, True, False)):
     drive = ssmraw.parse((d / name).read_bytes())
     assert drive.init == DEMO_INIT, name

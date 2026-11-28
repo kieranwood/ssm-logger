@@ -207,7 +207,8 @@ class OpenPort:
                 continue
             line = item[1]
             if line.startswith("are"):
-                raise OpenPortError(f"{_describe_error(line)} (command {data.split(b'\r\n')[0]!r})")
+                first = data.split(b"\r\n")[0]              # (no backslash inside the f-string: Python < 3.12)
+                raise OpenPortError(f"{_describe_error(line)} (command {first!r})")
             if line.startswith(expect):
                 return line
         raise OpenPortError(f"Timeout waiting for {expect!r} after {data.strip()!r}")

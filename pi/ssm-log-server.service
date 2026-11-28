@@ -1,17 +1,17 @@
-# Optional: run log_server.py as a service on the machine that receives the drives (Linux).
-# Edit the paths, user and token, then:
-#   sudo cp pi/ssm-log-server.service /etc/systemd/system/
-#   sudo systemctl enable --now ssm-log-server
+# Installed by pi/install-server.sh (which fills in the @…@ values).
 [Unit]
-Description=Receives drive recordings from car_logger.py
+Description=Receives drive recordings from car_logger.py and the ESP32 logger (log_server.py)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=youruser
-Environment=SSM_UPLOAD_TOKEN=change-me
-ExecStart=/usr/bin/python3 /home/youruser/ssm-logger/log_server.py --dir /home/youruser/car-logs
+User=@USER@
+WorkingDirectory=@REPO@
+# SSM_UPLOAD_TOKEN=… (root-only, so the token isn't in this world-readable file)
+EnvironmentFile=@ENV@
+ExecStart=/usr/bin/python3 -u @REPO@/log_server.py --dir @DIR@ --port @PORT@
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
