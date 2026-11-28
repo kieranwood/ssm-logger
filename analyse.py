@@ -128,7 +128,11 @@ def _times(n: int) -> str:
     return f"{n} time{'s' if n != 1 else ''}"
 
 
-CUT_MIN_S = 0.4        # fuel cuts shorter than this aren't judged
+LIT_PULLED = -2.0      # learned ignition timing below this (°) counts as pulled back
+LIT_SUSTAINED_S = 1.0  # ...and warns if it stays there this long
+LIT_FREQUENT = 5       # ...or happens this many times in one log
+
+CUT_MIN_S = 0.4       # fuel cuts shorter than this aren't judged
 AFR_FAIL, AFR_GOOD = 16.0, 18.0   # peak AFR after a cut: below FAIL barely reacted, GOOD is healthy
 
 
@@ -501,12 +505,31 @@ def check_engine(L: Log, S, P: Profile) -> list[Finding]:
             out.append(Finding(INFO, f"Knock signal seen {len(k)} times", f"At {_fmt_ranges(k)}.", k,
                                metric=_times(len(k)), short="Knock signal seen", channels=("Knock Signal #1",)))
     if L.has("Learned Ignition Timing"):
-        lit = float(np.nanmin(L["Learned Ignition Timing"]))
-        if lit < -2:
-            out.append(Finding(WARNING, f"Learned ignition timing down to {lit:.1f}°",
-                               "The ECU has pulled timing for knock - low-octane fuel, carbon or running lean "
-                               "under load.", metric=f"{lit:.1f}°", short="Learned ignition timing pulled back",
-                               channels=("Learned Ignition Timing",)))
+        # This channel follows the operating point sample to sample, so a single low sample is
+        # normal knock control; only warn when it stays pulled back or keeps happening.
+        lit = L["Learned Ignition Timing"]
+        dips = L.runs(S["running"] & (lit < LIT_PULLED), join_s=0.3)
+        if dips:
+            worst = float(np.nanmin(lit[S["running"]]))
+            longest = max(b - a for a, b in dips)
+            note = ""
+            if L.has("Engine Load"):
+                heavy = S["running"] & (L["Engine Load"] >= 80)
+                if heavy.any() and np.nanmax(lit[heavy]) > 0:
+                    note = f" Under heavy load the ECU still adds up to +{np.nanmax(lit[heavy]):.1f}°."
+            if longest >= LIT_SUSTAINED_S or len(dips) >= LIT_FREQUENT:
+                out.append(Finding(WARNING, f"Learned ignition timing down to {worst:.1f}°",
+                                   f"Pulled back {_times(len(dips))}, longest {longest:.1f} s, at "
+                                   f"{_fmt_ranges(dips)}. The ECU is learning to retard for knock - low-octane "
+                                   f"fuel, carbon or running lean under load.{note}", dips,
+                                   metric=f"{worst:.1f}°", short="Learned ignition timing pulled back",
+                                   channels=("Learned Ignition Timing",)))
+            else:
+                out.append(Finding(INFO, f"Brief learned-timing dips (down to {worst:.1f}°)",
+                                   f"{_times(len(dips)).capitalize()}, each under {LIT_SUSTAINED_S:.0f} s, at "
+                                   f"{_fmt_ranges(dips)}. That is normal knock control recovering straight away."
+                                   f"{note}", dips, metric=f"{worst:.1f}°", short="Brief learned-timing dips",
+                                   channels=("Learned Ignition Timing",)))
 
     if L.has("Engine Speed"):
         ol = S["running"] & ~S["closed"] & ~S["fuel_cut"]
