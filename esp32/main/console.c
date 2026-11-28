@@ -1,6 +1,7 @@
 // Commands on the COM port, for reading drives off the board (fetch_drives.py speaks this):
 //   ls            FILE <name> <bytes>  for each finished drive, then OK
-//   get <name>    BEGIN <name> <bytes> <crc32>, DATA <base64> lines, END <name>
+//   get <name> [offset]  BEGIN <name> <bytes> <crc32>, DATA <offset> <base64> lines, END <name>
+//                 (ABORT <name> if the computer sends anything meanwhile)
 //   rm <name>     OK, or ERR <why>
 //   df            DF <total bytes> <used bytes>
 //   status        STATUS <what the logger is doing>
@@ -8,6 +9,7 @@
 
 #include <dirent.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -57,7 +59,9 @@ static void cmd_ls(void)
     printf("OK\n");
 }
 
-static void cmd_get(const char *name)
+// Send a drive from byte `offset` on (fetch_drives.py resumes from where a damaged line was).
+// Each line is written in one go and carries its offset; any input from the computer stops it.
+static void cmd_get(const char *name, long offset)
 {
     char path[320];
     if (!valid_name(name)) {
@@ -79,15 +83,36 @@ static void cmd_get(const char *name)
         size += n;
     }
     printf("BEGIN %s %ld %08lx\n", name, size, (unsigned long)crc);
-    rewind(f);
-    unsigned char line[80];
+    fflush(stdout);
+    if (offset < 0 || offset > size || fseek(f, offset, SEEK_SET) != 0) {
+        fclose(f);
+        printf("ERR bad offset\n");
+        return;
+    }
+    char line[128];
+    int count = 0;
     while ((n = fread(chunk, 1, 57, f)) > 0) {          // 57 bytes -> 76 base64 characters
-        size_t olen;
-        mbedtls_base64_encode(line, sizeof line, &olen, chunk, n);
-        line[olen] = 0;
-        printf("DATA %s\n", line);
+        size_t olen, len;
+        len = snprintf(line, sizeof line, "DATA %ld ", offset);
+        mbedtls_base64_encode((unsigned char *)line + len, sizeof line - len - 1, &olen, chunk, n);
+        len += olen;
+        line[len++] = '\n';
+        uart_write_bytes(UART, line, len);
+        offset += n;
+        if (++count % 16 == 0) {
+            size_t waiting = 0;
+            uart_get_buffered_data_len(UART, &waiting);
+            if (waiting) {                              // the computer wants it to stop
+                fclose(f);
+                uart_wait_tx_done(UART, pdMS_TO_TICKS(1000));
+                printf("ABORT %s\n", name);
+                return;
+            }
+            vTaskDelay(1);                              // let the idle task run (task watchdog)
+        }
     }
     fclose(f);
+    uart_wait_tx_done(UART, pdMS_TO_TICKS(1000));
     printf("END %s\n", name);
 }
 
@@ -98,7 +123,9 @@ static void handle(char *line)
     if (strcmp(line, "ls") == 0) {
         cmd_ls();
     } else if (strcmp(line, "get") == 0 && arg) {
-        cmd_get(arg);
+        char *off = strchr(arg, ' ');
+        if (off) *off++ = 0;
+        cmd_get(arg, off ? atol(off) : 0);
     } else if (strcmp(line, "rm") == 0 && arg) {
         char path[320];
         snprintf(path, sizeof path, "%s/%s", s_dir, arg);
@@ -138,7 +165,7 @@ void console_start(const char *dir, void (*df)(size_t *total, size_t *used))
 {
     s_dir = dir;
     s_df = df;
-    uart_driver_install(UART, 1024, 0, 0, NULL, 0);
+    uart_driver_install(UART, 1024, 4096, 0, NULL, 0);
     uart_vfs_dev_use_driver(UART);
     xTaskCreate(console_task, "console", 6144, NULL, 5, NULL);
 }

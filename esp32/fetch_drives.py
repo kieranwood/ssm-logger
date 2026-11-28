@@ -70,23 +70,50 @@ class Board:
         raise TimeoutError("no reply to 'ls' - is this the board's COM port, and stage 2 flashed?")
 
     def get(self, name: str) -> bytes:
-        self.command(f"get {name}")
+        """Copy one drive. A damaged or out-of-place line (another message cutting in) stops the
+        transfer, which then resumes from the last good byte; the whole file is checked at the end."""
+        data = bytearray()
         size = crc = None
-        parts = []
-        for ln in self.lines(5):
-            if ln.startswith("ERR"):
-                raise OSError(ln)
-            if ln.startswith(f"BEGIN {name} "):
-                _, _, size, crc = ln.split()
-                size, crc = int(size), int(crc, 16)
-            elif ln.startswith("DATA ") and size is not None:
-                parts.append(base64.b64decode(ln[5:]))
-            elif ln == f"END {name}":
-                data = b"".join(parts)
-                if size is None or len(data) != size or zlib.crc32(data) != crc:
-                    raise OSError(f"{name}: damaged in transfer ({len(data)} of {size} bytes) - try again")
-                return data
-        raise TimeoutError(f"{name}: transfer stopped")
+        for attempt in range(30):
+            self.command(f"get {name} {len(data)}")
+            damaged = False
+            for ln in self.lines(5):
+                if ln.startswith("ERR"):
+                    raise OSError(f"{name}: {ln}")
+                if ln.startswith(f"BEGIN {name} "):
+                    _, _, size, crc = ln.split()
+                    size, crc = int(size), int(crc, 16)
+                elif ln.startswith("DATA ") and size is not None:
+                    try:
+                        _, off, b64 = ln.split(" ", 2)
+                        chunk = base64.b64decode(b64, validate=True)
+                        off = int(off)
+                    except ValueError:
+                        damaged = True
+                    else:
+                        whole = len(chunk) == 57 or off + len(chunk) == size
+                        if off == len(data) and whole:
+                            data += chunk
+                        elif off > len(data) or not whole:
+                            damaged = True
+                    if damaged:
+                        self.ser.write(b"\n")        # stop it, then resume from len(data)
+                        for ln2 in self.lines(2):
+                            if ln2.startswith(("ABORT", "END")):
+                                break
+                        self.ser.reset_input_buffer()
+                        break
+                elif ln == f"END {name}":
+                    break
+            if size is not None and len(data) == size:
+                if zlib.crc32(data) != crc:
+                    raise OSError(f"{name}: the copy doesn't match the board's checksum - try again")
+                if attempt:
+                    print(f"  ({attempt} damaged line(s) re-sent)")
+                return bytes(data)
+            if not damaged:
+                raise TimeoutError(f"{name}: transfer stopped at {len(data)} of {size} bytes")
+        raise OSError(f"{name}: too many damaged lines - try again")
 
 
 def main() -> int:
